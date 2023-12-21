@@ -1,13 +1,15 @@
 <?php
 
 // Путь в каталогу
-$directoryPath = '/Volumes/SSD256/www/vk-bot/backend-laravel/app/Http';
+$directoryPath = '/folder';
 
 // Расширения файлов для включения
 $extensions = ['php', 'vue', 'js'];
 
 function drawTree($directory, $prefix = '', $isRoot = true, $extensions = [])
 {
+	static $rootDisplayed = false;
+
 	$files = array_diff(scandir($directory), array('.', '..'));
 
 	// Фильтрация файлов по расширениям
@@ -22,15 +24,18 @@ function drawTree($directory, $prefix = '', $isRoot = true, $extensions = [])
 	$fileCount = 0;
 	$output = '';
 
+	// Добавление названия корневой директории
+	if ($isRoot && !$rootDisplayed) {
+		$rootDirectoryName = basename($directory);
+		$output .= $rootDirectoryName . PHP_EOL;
+		$rootDisplayed = true; // Установка флага, чтобы название не повторялось
+	}
+
 	foreach ($files as $file) {
 		$fileCount++;
 		$isLast = ($fileCount === $totalFiles);
-		$isFirst = ($fileCount === 1);
 
-		// Изменяем символ для первого элемента в корневой директории
-		if ($isRoot && $isFirst) {
-			$output .= '┌── ' . $file . PHP_EOL;
-		} elseif ($isLast) {
+		if ($isLast) {
 			$output .= $prefix . '└── ' . $file . PHP_EOL;
 		} else {
 			$output .= $prefix . '├── ' . $file . PHP_EOL;
@@ -42,8 +47,10 @@ function drawTree($directory, $prefix = '', $isRoot = true, $extensions = [])
 			$output .= drawTree($filePath, $newPrefix, false, $extensions);
 		}
 	}
+	
 	return $output;
 }
+
 
 // Включение буферизации вывода
 ob_start();
