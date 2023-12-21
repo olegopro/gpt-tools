@@ -99,4 +99,4 @@ $mergedContent = rtrim($mergedContent, PHP_EOL);
 // Записываем итоговый файл 
 file_put_contents($outputFile, $mergedContent);
 
-echo 'Файлы склеены в $outputFile' . PHP_EOL;
+echo "Файлы склеены в $outputFile" . PHP_EOL;

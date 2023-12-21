@@ -1,5 +1,11 @@
 <?php
 
+// Путь в каталогу
+$directoryPath = '/Volumes/SSD256/www/vk-bot/backend-laravel/app/Http';
+
+// Расширения файлов для включения
+$extensions = ['php', 'vue', 'js'];
+
 function drawTree($directory, $prefix = '', $isRoot = true, $extensions = [])
 {
 	$files = array_diff(scandir($directory), array('.', '..'));
@@ -39,12 +45,6 @@ function drawTree($directory, $prefix = '', $isRoot = true, $extensions = [])
 	return $output;
 }
 
-// Путь в каталогу
-$directoryPath = '/folder';
-
-// Расширения файлов для включения
-$extensions = ['php', 'vue', 'js'];
-
 // Включение буферизации вывода
 ob_start();
 echo drawTree($directoryPath, '', true, $extensions);
@@ -52,3 +52,5 @@ $treeOutput = ob_get_clean();
 
 // Запись вывода в файл
 file_put_contents('directory_tree.txt', $treeOutput);
+
+echo 'Дерево сформировано в directory_tree.txt' . PHP_EOL;
