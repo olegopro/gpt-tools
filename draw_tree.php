@@ -4,28 +4,33 @@ function drawTree($directory, $prefix = '', $isRoot = true, $extensions = [])
 {
 	$files = array_diff(scandir($directory), array('.', '..'));
 
+	// Фильтрация файлов по расширениям
+	if (!empty($extensions)) {
+		$files = array_filter($files, function ($file) use ($directory, $extensions) {
+			$filePath = $directory . DIRECTORY_SEPARATOR . $file;
+			return is_dir($filePath) || in_array(pathinfo($filePath, PATHINFO_EXTENSION), $extensions);
+		});
+	}
+
 	$totalFiles = count($files);
 	$fileCount = 0;
 	$output = '';
 
 	foreach ($files as $file) {
-		$filePath = $directory . DIRECTORY_SEPARATOR . $file;
-		$fileExtension = pathinfo($filePath, PATHINFO_EXTENSION);
-
-		// Пропускаем файл, если он не соответствует заданным расширениям
-		if (!empty($extensions) && !in_array($fileExtension, $extensions) && !is_dir($filePath)) {
-			continue;
-		}
-
 		$fileCount++;
 		$isLast = ($fileCount === $totalFiles);
+		$isFirst = ($fileCount === 1);
 
-		if ($isRoot && $fileCount === 1) {
-			$output .= '└── ' . $file . PHP_EOL;
+		// Изменяем символ для первого элемента в корневой директории
+		if ($isRoot && $isFirst) {
+			$output .= '┌── ' . $file . PHP_EOL;
+		} elseif ($isLast) {
+			$output .= $prefix . '└── ' . $file . PHP_EOL;
 		} else {
-			$output .= $prefix . ($isLast ? '└── ' : '├── ') . $file . PHP_EOL;
+			$output .= $prefix . '├── ' . $file . PHP_EOL;
 		}
 
+		$filePath = $directory . DIRECTORY_SEPARATOR . $file;
 		if (is_dir($filePath)) {
 			$newPrefix = $prefix . ($isLast ? '    ' : '│   ');
 			$output .= drawTree($filePath, $newPrefix, false, $extensions);
