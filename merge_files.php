@@ -70,7 +70,7 @@ foreach ($paths as $path) {
 
 		// Подсчет строк в текущем файле
 		$lineCount = substr_count($content, PHP_EOL) + 1;
-		$startLine = $currentLine + 1; // +1, начинаем после комментария "Начало файла"
+		$startLine = $currentLine + 1;
 		$endLine = $startLine + $lineCount - 1;
 
 		// Сохраняем информацию о строках для файла
@@ -79,7 +79,7 @@ foreach ($paths as $path) {
 		// Добавляем комментарии и содержимое файла к результату
 		$mergedContent .= "// Начало файла -> $filename" . PHP_EOL;
 		$mergedContent .= $content . PHP_EOL;
-		$mergedContent .= "// Конец файла -> $filename" . PHP_EOL . PHP_EOL . PHP_EOL;
+		$mergedContent .= "// Конец файла -> $filename" . str_repeat(PHP_EOL, 3);
 
 		// Обновляем текущую строку для следующего файла
 		$currentLine = $endLine + 4; // Учитываем строки с комментариями и переносами
@@ -89,17 +89,19 @@ foreach ($paths as $path) {
 // Обрезаем переносы в конце основного содержимого
 $mergedContent = rtrim($mergedContent, PHP_EOL);
 
-// Добавляем пустую строку перед информацией о файлах
-$mergedContent .= PHP_EOL . PHP_EOL . 'Список файлов с указанием строк начала и конца кода файла:' . PHP_EOL;
-
-// Добавляем информацию о файлах в конец содержимого
-foreach ($fileLinesInfo as $info) {
-	$mergedContent .= $info . PHP_EOL;
-}
-
-$mergedContent .= PHP_EOL . 'Отвечай, как опытный программист с более чем 10-летним стажем. Когда отвечаешь выбирай современные практики (лучшие подходы). После прочтения жди вопросы по этому коду.';
-
-// Записываем итоговый файл
+// Записываем содержимое в файл
 file_put_contents($outputFile, $mergedContent);
 
-echo "Файлы склеены в $outputFile" . PHP_EOL;
+// Подготовка и вывод информации о файлах и заключительного сообщения
+$consoleOutput = PHP_EOL . 'Список файлов с указанием строк начала и конца кода файла:' . PHP_EOL;
+foreach ($fileLinesInfo as $info) {
+	$consoleOutput .= $info . PHP_EOL;
+}
+
+$consoleOutput .= PHP_EOL . 'Отвечай, как опытный программист с более чем 10-летним стажем. Когда отвечаешь выбирай современные практики (лучшие подходы). После прочтения жди вопросы по этому коду.' . str_repeat(PHP_EOL, 2);
+
+// Вывод в консоль
+echo $consoleOutput;
+
+// Проверяем наличие команды pbcopy и выполняем копирование в буфер обмена, если она доступна
+exec("which pbcopy > /dev/null && printf " . escapeshellarg(trim($consoleOutput)) . " | pbcopy");
