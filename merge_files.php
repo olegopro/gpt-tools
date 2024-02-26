@@ -9,21 +9,26 @@ $paths = [
 // Расширения файлов для включения
 $extensions = ['php', 'vue', 'js'];
 
+// Массив для игнорирования определенных файлов
+$ignoreFiles = ['ignore_this.php', 'ignore_that.js'];
+
 // Имя файла результата
 $outputFile = 'merged_files.txt';
 
 // Функция для сканирования пути
-function scanPath($path, $extensions)
+function scanPath($path, $extensions, $ignoreFiles)
 {
 	if (is_dir($path)) {
-		return scanFolder($path, $extensions);
-	} else if (is_file($path)) {
+		return scanFolder($path, $extensions, $ignoreFiles);
+	} else if (is_file($path) && !in_array(basename($path), $ignoreFiles)) {
 		return [$path];
 	}
+
+	return []; // Возвращаем пустой массив, если путь не подходит
 }
 
 // Рекурсивный поиск файлов в папке
-function scanFolder($folder, $extensions)
+function scanFolder($folder, $extensions, $ignoreFiles)
 {
 	$files = [];
 	if (is_dir($folder)) {
@@ -31,7 +36,7 @@ function scanFolder($folder, $extensions)
 		$iterator = new RecursiveIteratorIterator($dir);
 
 		foreach ($iterator as $file) {
-			if (in_array(pathinfo($file, PATHINFO_EXTENSION), $extensions)) {
+			if (in_array(pathinfo($file, PATHINFO_EXTENSION), $extensions) && !in_array(basename($file), $ignoreFiles)) {
 				$files[] = $file;
 			}
 		}
@@ -53,7 +58,7 @@ $fileLinesInfo = [];
 
 // Перебираем пути
 foreach ($paths as $path) {
-	$files = scanPath($path, $extensions);
+	$files = scanPath($path, $extensions, $ignoreFiles);
 
 	foreach ($files as $filePath) {
 		$filename = basename($filePath);
