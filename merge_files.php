@@ -10,7 +10,7 @@ $paths = [
 ];
 
 // Расширения файлов для включения
-$extensions = ['php', 'vue', 'js'];
+$extensions = ['php', 'vue', 'js', 'ts'];
 
 // Массив для игнорирования определенных файлов
 $ignoreFiles = ['ignore_this.php', 'ignore_that.js'];
