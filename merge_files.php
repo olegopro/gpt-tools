@@ -12,8 +12,11 @@ $paths = [
 // Расширения файлов для включения
 $extensions = ['php', 'vue', 'js', 'ts'];
 
+// Флаг для включения/выключения вырезания тега <style>
+$removeStyleTag = true;
+
 // Флаг для включения/выключения удаления HTML-комментариев <!-- -->
-$removeHtmlComments = false;
+$removeHtmlComments = true;
 
 // Флаг для включения/выключения удаления однострочных комментариев //
 $removeSingleLineComments = false;
