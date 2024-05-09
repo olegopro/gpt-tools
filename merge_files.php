@@ -12,6 +12,9 @@ $paths = [
 // Расширения файлов для включения
 $extensions = ['php', 'vue', 'js', 'ts'];
 
+// Флаг для включения/выключения вырезания тега <style>
+$removeStyleTag = true;
+
 // Массив для игнорирования определенных файлов
 $ignoreFiles = ['ignore_this.php', 'ignore_that.js'];
 
@@ -79,7 +82,11 @@ foreach ($paths as $path) {
         $usedFiles[] = $relativePath;
         $absoluteFilePath = $projectDir . '/' . ltrim($relativePath, '/');
         $content = file_get_contents($absoluteFilePath);
-        $content = preg_replace('/<style.*?>.*?<\/style>/s', '', $content);
+
+        if ($removeStyleTag) {
+            $content = preg_replace('/<style.*?>.*?<\/style>/s', '', $content);
+        }
+
         $content = rtrim($content);
 
         // Подсчет строк в текущем файле
