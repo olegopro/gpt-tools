@@ -12,8 +12,14 @@ $paths = [
 // Расширения файлов для включения
 $extensions = ['php', 'vue', 'js', 'ts'];
 
-// Флаг для включения/выключения вырезания тега <style>
-$removeStyleTag = true;
+// Флаг для включения/выключения удаления HTML-комментариев <!-- -->
+$removeHtmlComments = false;
+
+// Флаг для включения/выключения удаления однострочных комментариев //
+$removeSingleLineComments = false;
+
+// Флаг для включения/выключения удаления многострочных комментариев /* */
+$removeMultiLineComments = false;
 
 // Массив для игнорирования определенных файлов
 $ignoreFiles = ['ignore_this.php', 'ignore_that.js'];
@@ -85,6 +91,18 @@ foreach ($paths as $path) {
 
         if ($removeStyleTag) {
             $content = preg_replace('/<style.*?>.*?<\/style>/s', '', $content);
+        }
+
+        if ($removeHtmlComments) {
+            $content = preg_replace('/<!--.*?-->/s', '', $content);
+        }
+
+        if ($removeSingleLineComments) {
+            $content = preg_replace('!//.*?(\r\n?|\n)!', '$1', $content);
+        }
+
+        if ($removeMultiLineComments) {
+            $content = preg_replace('!/\*.*?\*/!s', '', $content);
         }
 
         $content = rtrim($content);
