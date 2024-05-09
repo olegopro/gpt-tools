@@ -13,10 +13,10 @@ $paths = [
 $extensions = ['php', 'vue', 'js', 'ts'];
 
 // Флаг для включения/выключения вырезания тега <style>
-$removeStyleTag = true;
+$removeStyleTag = false;
 
 // Флаг для включения/выключения удаления HTML-комментариев <!-- -->
-$removeHtmlComments = true;
+$removeHtmlComments = false;
 
 // Флаг для включения/выключения удаления однострочных комментариев //
 $removeSingleLineComments = false;
