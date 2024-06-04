@@ -27,6 +27,9 @@ $removeMultiLineComments = false;
 // Массив для игнорирования определенных файлов
 $ignoreFiles = ['ignore_this.php', 'ignore_that.js'];
 
+// Массив для игнорирования определенных папок (относительные пути от корневой папки проекта)
+$ignoreDirectories = ['/folder_to_ignore', '/another_folder_to_ignore'];
+
 // Имя файла результата
 $outputFile = 'merged_files.txt';
 
@@ -37,13 +40,27 @@ function makeRelativePath($filePath, $projectDir)
     return str_replace($projectDir, '', $filePath);
 }
 
+// Функция для проверки, является ли директория игнорируемой
+function isIgnoredDirectory($filePath, $ignoreDirectories)
+{
+    foreach ($ignoreDirectories as $ignoredDir) {
+        // Проверка, начинается ли относительный путь файла с пути, указанного в ignoreDirectories
+        if (strpos($filePath, $ignoredDir) === 0) {
+            return true; // Если да, то возвращаем true, указывая, что директория игнорируется
+        }
+    }
+    
+    return false; // Если ни один из путей не совпадает, возвращаем false
+}
 
 // Функция для сканирования пути
-function scanPath($path, $extensions, $ignoreFiles, $projectDir)
+function scanPath($path, $extensions, $ignoreFiles, $ignoreDirectories, $projectDir)
 {
     if (is_dir($path)) {
-        return scanFolder($path, $extensions, $ignoreFiles, $projectDir);
+        // Если путь является директорией, сканируем ее рекурсивно
+        return scanFolder($path, $extensions, $ignoreFiles, $ignoreDirectories, $projectDir);
     } else if (is_file($path) && !in_array(basename($path), $ignoreFiles)) {
+        // Если путь является файлом и не находится в списке игнорируемых файлов, возвращаем относительный путь
         return [makeRelativePath($path, $projectDir)];
     }
 
@@ -51,7 +68,7 @@ function scanPath($path, $extensions, $ignoreFiles, $projectDir)
 }
 
 // Рекурсивный поиск файлов в папке
-function scanFolder($folder, $extensions, $ignoreFiles, $projectDir)
+function scanFolder($folder, $extensions, $ignoreFiles, $ignoreDirectories, $projectDir)
 {
     $files = [];
     if (is_dir($folder)) {
@@ -59,12 +76,24 @@ function scanFolder($folder, $extensions, $ignoreFiles, $projectDir)
         $iterator = new RecursiveIteratorIterator($dir);
 
         foreach ($iterator as $file) {
-            if (in_array($file->getExtension(), $extensions) && !in_array($file->getFilename(), $ignoreFiles)) {
-                $files[] = makeRelativePath($file->getPathname(), $projectDir);
+            $relativePath = makeRelativePath($file->getPathname(), $projectDir);
+
+            // Пропускаем файл, если он находится в игнорируемой директории
+            if (isIgnoredDirectory($relativePath, $ignoreDirectories)) {
+                continue;
+            }
+
+            // Добавляем файл в массив, если его расширение соответствует и он не находится в списке игнорируемых файлов
+            if (
+                in_array($file->getExtension(), $extensions) &&
+                !in_array($file->getFilename(), $ignoreFiles)
+            ) {
+                $files[] = $relativePath;
             }
         }
     }
-    return $files;
+    
+    return $files; // Возвращаем массив найденных файлов
 }
 
 // Массив для отслеживания обработанных файлов
@@ -81,33 +110,41 @@ $fileLinesInfo = [];
 
 // Перебираем пути
 foreach ($paths as $path) {
-    $files = scanPath($path, $extensions, $ignoreFiles, $projectDir);
+    // Сканируем текущий путь
+    $files = scanPath($path, $extensions, $ignoreFiles, $ignoreDirectories, $projectDir);
 
     foreach ($files as $relativePath) {
+        // Пропускаем файл, если он уже был обработан
         if (in_array($relativePath, $usedFiles)) {
             continue;
         }
 
+        // Добавляем файл в список обработанных
         $usedFiles[] = $relativePath;
         $absoluteFilePath = $projectDir . '/' . ltrim($relativePath, '/');
         $content = file_get_contents($absoluteFilePath);
 
+        // Удаление тега <style>, если это указано в настройках
         if ($removeStyleTag) {
             $content = preg_replace('/<style.*?>.*?<\/style>/s', '', $content);
         }
 
+        // Удаление HTML-комментариев, если это указано в настройках
         if ($removeHtmlComments) {
             $content = preg_replace('/<!--.*?-->/s', '', $content);
         }
 
+        // Удаление однострочных комментариев, если это указано в настройках
         if ($removeSingleLineComments) {
             $content = preg_replace('!//.*?(\r\n?|\n)!', '$1', $content);
         }
 
+        // Удаление многострочных комментариев, если это указано в настройках
         if ($removeMultiLineComments) {
             $content = preg_replace('!/\*.*?\*/!s', '', $content);
         }
 
+        // Удаляем лишние пробелы и переносы строк в конце содержимого
         $content = rtrim($content);
 
         // Подсчет строк в текущем файле
@@ -134,7 +171,7 @@ foreach ($paths as $path) {
     }
 }
 
-// // Обрезаем переносы в конце основного содержимого
+// Обрезаем переносы в конце основного содержимого
 $mergedContent = rtrim($mergedContent, PHP_EOL);
 
 // Записываем содержимое в файл
@@ -151,5 +188,6 @@ $consoleOutput .= PHP_EOL . 'Отвечай, как опытный програ�
 
 // Вывод в консоль
 echo $consoleOutput;
+
 // Проверяем наличие команды pbcopy и выполняем копирование в буфер обмена, если она доступна
 exec("which pbcopy > /dev/null && printf " . escapeshellarg(trim($consoleOutput)) . " | pbcopy");
