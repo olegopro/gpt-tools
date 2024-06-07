@@ -178,7 +178,7 @@ $mergedContent = rtrim($mergedContent, PHP_EOL);
 file_put_contents($outputFile, $mergedContent);
 
 // Подготовка и вывод информации о файлах и заключительного сообщения
-$consoleOutput = PHP_EOL . 'Список файлов с указанием строк начала и конца кода файла:' . PHP_EOL;
+$consoleOutput = PHP_EOL . 'Ниже написано содержание прикреплённого файла в котором объединён код нескольких файлов проекта. Это содержание указывает на начальные и конечные строки файлов которые были объеденины в прикреплённый файл к этому сообщению:' . PHP_EOL;
 
 foreach ($fileLinesInfo as $info) {
     $consoleOutput .= $info . PHP_EOL;
