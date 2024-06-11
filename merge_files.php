@@ -10,7 +10,7 @@ $paths = [
 ];
 
 // Расширения файлов для включения
-$extensions = ['php', 'vue', 'js', 'ts'];
+$extensions = ['php', 'vue', 'js','json', 'ts', 'html', 'css', 'scss'];
 
 // Флаг для включения/выключения вырезания тега <style>
 $removeStyleTag = false;
