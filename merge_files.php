@@ -136,7 +136,7 @@ foreach ($paths as $path) {
 
         // Удаление однострочных комментариев, если это указано в настройках
         if ($removeSingleLineComments) {
-            $content = preg_replace('!//.*?(\r\n?|\n)!', '$1', $content);
+            $content = preg_replace('!^\s*//.*?(\r?\n|\r)!m', '', $content);
         }
 
         // Удаление многострочных комментариев, если это указано в настройках
