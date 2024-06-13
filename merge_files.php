@@ -141,9 +141,9 @@ foreach ($paths as $path) {
 
         // Удаление многострочных комментариев, если это указано в настройках
         if ($removeMultiLineComments) {
-            $content = preg_replace('!/\*.*?\*/!s', '', $content);
+            $content = preg_replace('!/\*[\s\S]*?\*/\s*!', '', $content);
         }
-
+        
         // Удаляем лишние пробелы и переносы строк в конце содержимого
         $content = rtrim($content);
 
