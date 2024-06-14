@@ -1,16 +1,16 @@
 <?php
 
-// Путь к папке проекта
+// Путь к папке проекта (абсолютный путь)
 $projectDir = '/project-directory';
 
-// Массив с путями/файлам для сканирования
+// Массив с путями/файлам для сканирования (относительные пути)
 $paths = [
     '/folder',
     '/folder/file.php'
 ];
 
 // Расширения файлов для включения
-$extensions = ['php', 'vue', 'js','json', 'ts', 'html', 'css', 'scss'];
+$extensions = ['php', 'vue', 'js', 'json', 'ts', 'html', 'css', 'scss'];
 
 // Флаг для включения/выключения вырезания тега <style>
 $removeStyleTag = false;
@@ -44,8 +44,10 @@ function makeRelativePath($filePath, $projectDir)
 function isIgnoredDirectory($filePath, $ignoreDirectories)
 {
     foreach ($ignoreDirectories as $ignoredDir) {
+        // Удаляем начальный слэш из пути для корректного сравнения
+        $ignoredDir = ltrim($ignoredDir, '/');
         // Проверка, начинается ли относительный путь файла с пути, указанного в ignoreDirectories
-        if (strpos($filePath, $ignoredDir) === 0) {
+        if (strpos(ltrim($filePath, '/'), $ignoredDir) === 0) {
             return true; // Если да, то возвращаем true, указывая, что директория игнорируется
         }
     }
@@ -56,12 +58,13 @@ function isIgnoredDirectory($filePath, $ignoreDirectories)
 // Функция для сканирования пути
 function scanPath($path, $extensions, $ignoreFiles, $ignoreDirectories, $projectDir)
 {
-    if (is_dir($path)) {
+    $fullPath = $projectDir . '/' . ltrim($path, '/');
+    if (is_dir($fullPath)) {
         // Если путь является директорией, сканируем ее рекурсивно
-        return scanFolder($path, $extensions, $ignoreFiles, $ignoreDirectories, $projectDir);
-    } else if (is_file($path) && !in_array(basename($path), $ignoreFiles)) {
+        return scanFolder($fullPath, $extensions, $ignoreFiles, $ignoreDirectories, $projectDir);
+    } else if (is_file($fullPath) && !in_array(basename($fullPath), $ignoreFiles)) {
         // Если путь является файлом и не находится в списке игнорируемых файлов, возвращаем относительный путь
-        return [makeRelativePath($path, $projectDir)];
+        return [makeRelativePath($fullPath, $projectDir)];
     }
 
     return []; // Возвращаем пустой массив, если путь не подходит
