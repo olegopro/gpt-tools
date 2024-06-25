@@ -41,18 +41,43 @@ function makeRelativePath($filePath, $projectDir)
 }
 
 // Функция для проверки, является ли директория игнорируемой
-function isIgnoredDirectory($filePath, $ignoreDirectories)
+function isIgnoredDirectory($filePath, $ignoreDirectories, $projectDir)
 {
+    // Удаляем путь проекта из пути файла и обрезаем слэши
+    $filePath = trim(str_replace($projectDir, '', $filePath), '/');
+
     foreach ($ignoreDirectories as $ignoredDir) {
-        // Удаляем начальный слэш из пути для корректного сравнения
-        $ignoredDir = ltrim($ignoredDir, '/');
-        // Проверка, начинается ли относительный путь файла с пути, указанного в ignoreDirectories
-        if (strpos(ltrim($filePath, '/'), $ignoredDir) === 0) {
-            return true; // Если да, то возвращаем true, указывая, что директория игнорируется
+        // Обрезаем слэши у игнорируемой директории
+        $ignoredDir = trim($ignoredDir, '/');
+
+        // Разбиваем пути на части
+        $filePathParts = explode('/', $filePath);
+        $ignoredDirParts = explode('/', $ignoredDir);
+
+        // Проверяем, что путь файла не короче игнорируемого пути
+        if (count($filePathParts) < count($ignoredDirParts)) {
+            continue;
+        }
+
+        // Флаг для отслеживания совпадения частей пути
+        $match = true;
+
+        // Сравниваем каждую часть пути
+        for ($i = 0; $i < count($ignoredDirParts); $i++) {
+            if ($filePathParts[$i] !== $ignoredDirParts[$i]) {
+                $match = false;
+                break;
+            }
+        }
+
+        // Если все части совпали, считаем директорию игнорируемой
+        if ($match) {
+            return true;
         }
     }
-    
-    return false; // Если ни один из путей не совпадает, возвращаем false
+
+    // Если ни один путь не совпал, директория не игнорируется
+    return false;
 }
 
 // Функция для сканирования пути
@@ -79,12 +104,13 @@ function scanFolder($folder, $extensions, $ignoreFiles, $ignoreDirectories, $pro
         $iterator = new RecursiveIteratorIterator($dir);
 
         foreach ($iterator as $file) {
-            $relativePath = makeRelativePath($file->getPathname(), $projectDir);
-
-            // Пропускаем файл, если он находится в игнорируемой директории
-            if (isIgnoredDirectory($relativePath, $ignoreDirectories)) {
+            // Проверяем, находится ли файл в игнорируемой директории
+            // Передаем $projectDir в функцию isIgnoredDirectory для более точного сравнения
+            if (isIgnoredDirectory($file->getPathname(), $ignoreDirectories, $projectDir)) {
                 continue;
             }
+
+            $relativePath = makeRelativePath($file->getPathname(), $projectDir);
 
             // Добавляем файл в массив, если его расширение соответствует и он не находится в списке игнорируемых файлов
             if (
@@ -95,7 +121,7 @@ function scanFolder($folder, $extensions, $ignoreFiles, $ignoreDirectories, $pro
             }
         }
     }
-    
+
     return $files; // Возвращаем массив найденных файлов
 }
 
@@ -146,7 +172,7 @@ foreach ($paths as $path) {
         if ($removeMultiLineComments) {
             $content = preg_replace('!/\*[\s\S]*?\*/\s*!', '', $content);
         }
-        
+
         // Удаляем лишние пробелы и переносы строк в конце содержимого
         $content = rtrim($content);
 
