@@ -9,7 +9,7 @@ $paths = [
     '/folder/file.php'
 ];
 
-// Расширения файлов для включения
+// Расширения файлов для включения или '*' для включения всех файлов
 $extensions = ['php', 'vue', 'js', 'json', 'ts', 'html', 'css', 'scss'];
 
 // Флаг для включения/выключения вырезания тега <style>
@@ -80,6 +80,17 @@ function isIgnoredDirectory($filePath, $ignoreDirectories, $projectDir)
     return false;
 }
 
+// Функция для проверки, должен ли файл быть включен на основе его расширения
+function shouldIncludeFile($filename, $extensions) {
+    // Если в массиве расширений есть '*', включаем все файлы
+    if (in_array('*', $extensions)) {
+        return true;
+    }
+    // Иначе проверяем, соответствует ли расширение файла списку разрешенных расширений
+    $fileExtension = pathinfo($filename, PATHINFO_EXTENSION);
+    return in_array($fileExtension, $extensions);
+}
+
 // Функция для сканирования пути
 function scanPath($path, $extensions, $ignoreFiles, $ignoreDirectories, $projectDir)
 {
@@ -87,8 +98,8 @@ function scanPath($path, $extensions, $ignoreFiles, $ignoreDirectories, $project
     if (is_dir($fullPath)) {
         // Если путь является директорией, сканируем ее рекурсивно
         return scanFolder($fullPath, $extensions, $ignoreFiles, $ignoreDirectories, $projectDir);
-    } else if (is_file($fullPath) && !in_array(basename($fullPath), $ignoreFiles)) {
-        // Если путь является файлом и не находится в списке игнорируемых файлов, возвращаем относительный путь
+    } else if (is_file($fullPath) && !in_array(basename($fullPath), $ignoreFiles) && shouldIncludeFile(basename($fullPath), $extensions)) {
+        // Если путь является файлом, не находится в списке игнорируемых файлов и соответствует критериям включения, возвращаем относительный путь
         return [makeRelativePath($fullPath, $projectDir)];
     }
 
@@ -100,23 +111,20 @@ function scanFolder($folder, $extensions, $ignoreFiles, $ignoreDirectories, $pro
 {
     $files = [];
     if (is_dir($folder)) {
-        $dir = new RecursiveDirectoryIterator($folder);
+        // Используем RecursiveDirectoryIterator для обхода всех файлов и папок
+        $dir = new RecursiveDirectoryIterator($folder, RecursiveDirectoryIterator::SKIP_DOTS);
         $iterator = new RecursiveIteratorIterator($dir);
 
         foreach ($iterator as $file) {
             // Проверяем, находится ли файл в игнорируемой директории
-            // Передаем $projectDir в функцию isIgnoredDirectory для более точного сравнения
             if (isIgnoredDirectory($file->getPathname(), $ignoreDirectories, $projectDir)) {
                 continue;
             }
 
             $relativePath = makeRelativePath($file->getPathname(), $projectDir);
 
-            // Добавляем файл в массив, если его расширение соответствует и он не находится в списке игнорируемых файлов
-            if (
-                in_array($file->getExtension(), $extensions) &&
-                !in_array($file->getFilename(), $ignoreFiles)
-            ) {
+            // Добавляем файл в массив, если он соответствует критериям включения и не находится в списке игнорируемых файлов
+            if (shouldIncludeFile($file->getFilename(), $extensions) && !in_array($file->getFilename(), $ignoreFiles)) {
                 $files[] = $relativePath;
             }
         }
