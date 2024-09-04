@@ -3,218 +3,287 @@
 // Путь к папке проекта (абсолютный путь)
 $projectDir = '/project-directory';
 
-// Массив с путями/файлам для сканирования (относительные пути)
+// Абсолютный путь к корневой директории поиска зависимостей (например, src)
+$dependencyScanRoot = '/project-directory/src';
+
+// Массив с путями/файлами для сканирования (относительные пути)
 $paths = [
     '/folder',
     '/folder/file.php'
 ];
 
+// Поиск зависимостей
+$scanDependencies = true;
+
 // Расширения файлов для включения или '*' для включения всех файлов
-$extensions = ['php', 'vue', 'js', 'json', 'ts', 'html', 'css', 'scss'];
+$extensions = ['php', 'vue', 'js', 'json', 'ts', 'html', 'css', 'scss']; // Для обхода всех файлов
 
-// Флаг для включения/выключения вырезания тега <style>
+// Хардкод расширений для файлов, в которых будут искаться зависимости
+const DEPENDENCY_EXTENSIONS = ['vue', 'js', 'ts'];
+
+// Флаги для включения/выключения обработки содержимого
 $removeStyleTag = false;
-
-// Флаг для включения/выключения удаления HTML-комментариев <!-- -->
 $removeHtmlComments = false;
-
-// Флаг для включения/выключения удаления однострочных комментариев //
 $removeSingleLineComments = false;
-
-// Флаг для включения/выключения удаления многострочных комментариев /* */
 $removeMultiLineComments = false;
 
 // Массив для игнорирования определенных файлов
 $ignoreFiles = ['ignore_this.php', 'ignore_that.js'];
 
 // Массив для игнорирования определенных папок (относительные пути от корневой папки проекта)
-$ignoreDirectories = ['/folder_to_ignore', '/another_folder_to_ignore'];
+$ignoreDirectories = ['folder_to_ignore', 'another_folder_to_ignore'];
 
 // Имя файла результата
 $outputFile = 'merged_files.txt';
 
-// Функция для создания относительного пути файла
 function makeRelativePath($filePath, $projectDir)
 {
-    // Удаление полного пути к папке проекта из пути к файлу, оставляя только относительный путь
-    return str_replace($projectDir, '', $filePath);
+    $relativePath = str_replace($projectDir, '', $filePath);
+    return ltrim($relativePath, '/');
 }
 
-// Функция для проверки, является ли директория игнорируемой
 function isIgnoredDirectory($filePath, $ignoreDirectories, $projectDir)
 {
-    // Удаляем путь проекта из пути файла и обрезаем слэши
-    $filePath = trim(str_replace($projectDir, '', $filePath), '/');
-
+    $relativeFilePath = trim(str_replace($projectDir, '', $filePath), '/');
+    
     foreach ($ignoreDirectories as $ignoredDir) {
-        // Обрезаем слэши у игнорируемой директории
         $ignoredDir = trim($ignoredDir, '/');
-
-        // Разбиваем пути на части
-        $filePathParts = explode('/', $filePath);
-        $ignoredDirParts = explode('/', $ignoredDir);
-
-        // Проверяем, что путь файла не короче игнорируемого пути
-        if (count($filePathParts) < count($ignoredDirParts)) {
-            continue;
-        }
-
-        // Флаг для отслеживания совпадения частей пути
-        $match = true;
-
-        // Сравниваем каждую часть пути
-        for ($i = 0; $i < count($ignoredDirParts); $i++) {
-            if ($filePathParts[$i] !== $ignoredDirParts[$i]) {
-                $match = false;
-                break;
-            }
-        }
-
-        // Если все части совпали, считаем директорию игнорируемой
-        if ($match) {
+        if (strpos($relativeFilePath . '/', $ignoredDir . '/') === 0 || $relativeFilePath === $ignoredDir) {
             return true;
         }
     }
 
-    // Если ни один путь не совпал, директория не игнорируется
     return false;
 }
 
-// Функция для проверки, должен ли файл быть включен на основе его расширения
-function shouldIncludeFile($filename, $extensions) {
-    // Если в массиве расширений есть '*', включаем все файлы
+function shouldIncludeFile($filename, $extensions)
+{
     if (in_array('*', $extensions)) {
         return true;
     }
-    // Иначе проверяем, соответствует ли расширение файла списку разрешенных расширений
     $fileExtension = pathinfo($filename, PATHINFO_EXTENSION);
     return in_array($fileExtension, $extensions);
 }
 
-// Функция для сканирования пути
-function scanPath($path, $extensions, $ignoreFiles, $ignoreDirectories, $projectDir)
+function scanDependencies($file, $scanRootDir, $projectDir, $ignoreDirectories, &$scannedFiles = [])
 {
-    $fullPath = $projectDir . '/' . ltrim($path, '/');
-    if (is_dir($fullPath)) {
-        // Если путь является директорией, сканируем ее рекурсивно
-        return scanFolder($fullPath, $extensions, $ignoreFiles, $ignoreDirectories, $projectDir);
-    } else if (is_file($fullPath) && !in_array(basename($fullPath), $ignoreFiles) && shouldIncludeFile(basename($fullPath), $extensions)) {
-        // Если путь является файлом, не находится в списке игнорируемых файлов и соответствует критериям включения, возвращаем относительный путь
-        return [makeRelativePath($fullPath, $projectDir)];
+    echo PHP_EOL . "Сканирование зависимостей для файла: $file\n";
+
+    $fullPath = $projectDir . '/' . ltrim($file, '/');
+    
+    // Проверяем, что файл имеет допустимое расширение для поиска зависимостей (только .vue, .js, .ts)
+    if (!shouldIncludeFile($fullPath, DEPENDENCY_EXTENSIONS)) {
+        echo "  Файл $file пропущен (не соответствует расширениям для зависимостей).\n";
+        return [];
     }
 
-    return []; // Возвращаем пустой массив, если путь не подходит
+    if (!file_exists($fullPath) || is_dir($fullPath) || in_array($file, $scannedFiles) || isIgnoredDirectory($fullPath, $ignoreDirectories, $scanRootDir)) {
+        return [];
+    }
+
+    $scannedFiles[] = $file;
+    $content = file_get_contents($fullPath);
+    $dependencies = [];
+
+    // Регулярное выражение для поиска импортов
+    $importRegex = '/import\s+(?:{[^}]+}|\w+)\s+from\s+[\'"]([^\'"]+)[\'"]/';
+
+    if (preg_match_all($importRegex, $content, $matches)) {
+        foreach ($matches[1] as $match) {
+            echo "  Найден импорт: $match\n";
+            $dependencyPath = resolveDependencyPath($match, $file, $scanRootDir, $projectDir, $ignoreDirectories);
+            if ($dependencyPath && !isIgnoredDirectory($projectDir . '/' . $dependencyPath, $ignoreDirectories, $scanRootDir)) {
+                echo "  Разрешен путь: $dependencyPath\n";
+                $dependencies[] = $dependencyPath;
+                $dependencies = array_merge($dependencies, scanDependencies($dependencyPath, $scanRootDir, $projectDir, $ignoreDirectories, $scannedFiles));
+            } else {
+                echo "  Не удалось разрешить путь для: $match или путь находится в игнорируемой директории\n";
+            }
+        }
+    }
+
+    return array_unique($dependencies);
 }
 
-// Рекурсивный поиск файлов в папке
-function scanFolder($folder, $extensions, $ignoreFiles, $ignoreDirectories, $projectDir)
+function resolveDependencyPath($importPath, $currentFile, $scanRootDir, $projectDir, $ignoreDirectories)
 {
-    $files = [];
-    if (is_dir($folder)) {
-        // Используем RecursiveDirectoryIterator для обхода всех файлов и папок
-        $dir = new RecursiveDirectoryIterator($folder, RecursiveDirectoryIterator::SKIP_DOTS);
-        $iterator = new RecursiveIteratorIterator($dir);
+    $currentDir = dirname($currentFile);
 
-        foreach ($iterator as $file) {
-            // Проверяем, находится ли файл в игнорируемой директории
-            if (isIgnoredDirectory($file->getPathname(), $ignoreDirectories, $projectDir)) {
+    // Обработка относительных путей
+    if (strpos($importPath, './') === 0 || strpos($importPath, '../') === 0) {
+        $resolvedPath = realpath($scanRootDir . '/' . $currentDir . '/' . $importPath);
+        if ($resolvedPath && !isIgnoredDirectory($resolvedPath, $ignoreDirectories, $scanRootDir)) {
+            return makeRelativePath($resolvedPath, $projectDir);
+        }
+    }
+
+    // Рекурсивный поиск файла только внутри указанной директории (scanRootDir)
+    $foundPath = findFileRecursively($scanRootDir, $importPath, $ignoreDirectories);
+    if ($foundPath) {
+        return makeRelativePath($foundPath, $projectDir);
+    }
+
+    // Если файл не найден, попробуем добавить расширение
+    $extensions = ['.js', '.vue', '.ts'];
+    foreach ($extensions as $ext) {
+        $foundPath = findFileRecursively($scanRootDir, $importPath . $ext, $ignoreDirectories);
+        if ($foundPath) {
+            return makeRelativePath($foundPath, $projectDir);
+        }
+    }
+
+    return null;
+}
+
+function findFileRecursively($dir, $filename, $ignoreDirectories)
+{
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($dir, RecursiveDirectoryIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::SELF_FIRST
+    );
+
+    foreach ($iterator as $file) {
+        if ($file->isDir()) {
+            if (isIgnoredDirectory($file->getPathname(), $ignoreDirectories, $dir)) {
+                $iterator->next();
                 continue;
             }
+        }
 
-            $relativePath = makeRelativePath($file->getPathname(), $projectDir);
-
-            // Добавляем файл в массив, если он соответствует критериям включения и не находится в списке игнорируемых файлов
-            if (shouldIncludeFile($file->getFilename(), $extensions) && !in_array($file->getFilename(), $ignoreFiles)) {
-                $files[] = $relativePath;
+        if ($file->isFile() && $file->getFilename() === basename($filename)) {
+            if (!isIgnoredDirectory($file->getPathname(), $ignoreDirectories, $dir)) {
+                return $file->getPathname();
             }
         }
     }
 
-    return $files; // Возвращаем массив найденных файлов
+    return null;
 }
 
-// Массив для отслеживания обработанных файлов
+function scanAllDependencies($paths, $projectDir, $extensions, $ignoreFiles, $ignoreDirectories, $scanDependencies, $scanRootDir)
+{
+    $allFiles = [];
+    $dependencyFiles = [];
+
+    echo "Project Directory: $projectDir\n";
+
+    if (!is_dir($projectDir)) {
+        echo "Ошибка: Директория проекта не существует: $projectDir\n";
+        exit(1);
+    }
+
+    foreach ($paths as $path) {
+        $fullPath = $projectDir . '/' . ltrim($path, '/');
+        if (is_file($fullPath)) {
+            if (!in_array(basename($fullPath), $ignoreFiles) && 
+                shouldIncludeFile(basename($fullPath), $extensions) && 
+                !isIgnoredDirectory($fullPath, $ignoreDirectories, $projectDir)) {
+                $relativePath = makeRelativePath($fullPath, $projectDir);
+                $allFiles[] = $relativePath;
+                if ($scanDependencies) {
+                    $dependencies = scanDependencies($relativePath, $scanRootDir, $projectDir, $ignoreDirectories);
+                    $dependencyFiles = array_merge($dependencyFiles, $dependencies);
+                }
+            }
+        } elseif (is_dir($fullPath)) {
+            $iterator = new RecursiveIteratorIterator(
+                new RecursiveDirectoryIterator($fullPath, RecursiveDirectoryIterator::SKIP_DOTS),
+                RecursiveIteratorIterator::SELF_FIRST
+            );
+            
+            foreach ($iterator as $file) {
+                if ($file->isFile()) {
+                    $relativeFilePath = makeRelativePath($file->getPathname(), $projectDir);
+                    if (!in_array($file->getBasename(), $ignoreFiles) &&
+                        !isIgnoredDirectory($file->getPathname(), $ignoreDirectories, $projectDir) &&
+                        shouldIncludeFile($file->getBasename(), $extensions)
+                    ) {
+                        $allFiles[] = $relativeFilePath;
+                        if ($scanDependencies) {
+                            $dependencies = scanDependencies($relativeFilePath, $scanRootDir, $projectDir, $ignoreDirectories);
+                            $dependencyFiles = array_merge($dependencyFiles, $dependencies);
+                        }
+                    }
+                }
+            }
+        } else {
+            echo "Предупреждение: Путь не существует или не соответствует условиям: $fullPath\n";
+        }
+    }
+
+    $result = $scanDependencies ? array_unique(array_merge($allFiles, $dependencyFiles)) : $allFiles;
+
+    // Дополнительная фильтрация результатов
+    $result = array_filter($result, function($path) use ($projectDir, $ignoreDirectories) {
+        return !isIgnoredDirectory($projectDir . '/' . $path, $ignoreDirectories, $projectDir);
+    });
+
+    echo PHP_EOL . "Итоговый результат scanAllDependencies():\n";
+    print_r($result);
+
+    return $result;
+}
+
 $usedFiles = [];
-
-// Объединенное содержимое
 $mergedContent = '';
-
-// Переменная для подсчета строк
 $currentLine = 1;
-
-// Массив для хранения информации о файлах
 $fileLinesInfo = [];
 
-// Перебираем пути
-foreach ($paths as $path) {
-    // Сканируем текущий путь
-    $files = scanPath($path, $extensions, $ignoreFiles, $ignoreDirectories, $projectDir);
+$allPaths = scanAllDependencies($paths, $projectDir, $extensions, $ignoreFiles, $ignoreDirectories, $scanDependencies, $dependencyScanRoot);
 
-    foreach ($files as $relativePath) {
-        // Пропускаем файл, если он уже был обработан
-        if (in_array($relativePath, $usedFiles)) {
-            continue;
-        }
-
-        // Добавляем файл в список обработанных
-        $usedFiles[] = $relativePath;
-        $absoluteFilePath = $projectDir . '/' . ltrim($relativePath, '/');
-        $content = file_get_contents($absoluteFilePath);
-
-        // Удаление тега <style>, если это указано в настройках
-        if ($removeStyleTag) {
-            $content = preg_replace('/<style.*?>.*?<\/style>/s', '', $content);
-        }
-
-        // Удаление HTML-комментариев, если это указано в настройках
-        if ($removeHtmlComments) {
-            $content = preg_replace('/<!--.*?-->/s', '', $content);
-        }
-
-        // Удаление однострочных комментариев, если это указано в настройках
-        if ($removeSingleLineComments) {
-            $content = preg_replace('!^\s*//.*?(\r?\n|\r)!m', '', $content);
-        }
-
-        // Удаление многострочных комментариев, если это указано в настройках
-        if ($removeMultiLineComments) {
-            $content = preg_replace('!/\*[\s\S]*?\*/\s*!', '', $content);
-        }
-
-        // Удаляем лишние пробелы и переносы строк в конце содержимого
-        $content = rtrim($content);
-
-        // Подсчет строк в текущем файле
-        $lineCount = substr_count($content, PHP_EOL) + 1;
-        $startLine = $currentLine + 1;
-        $endLine = $startLine + $lineCount - 1;
-
-        // Получаем имя корневой папки
-        $rootFolderName = basename($projectDir);
-
-        // Добавляем имя корневой папки к relativePath
-        $fullRelativePath = '/' . $rootFolderName . $relativePath;
-
-        // Сохраняем информацию о строках для файла
-        $fileLinesInfo[] = "$fullRelativePath (строки $startLine - $endLine)";
-
-        // Добавляем комментарии и содержимое файла к результату
-        $mergedContent .= "// Начало файла -> $fullRelativePath" . PHP_EOL;
-        $mergedContent .= $content . PHP_EOL;
-        $mergedContent .= "// Конец файла -> $fullRelativePath" . str_repeat(PHP_EOL, 3);
-
-        // Обновляем текущую строку для следующего файла
-        $currentLine = $endLine + 4; // Учитываем строки с комментариями и переносами
+foreach ($allPaths as $relativePath) {
+    if (in_array($relativePath, $usedFiles) || isIgnoredDirectory($projectDir . '/' . $relativePath, $ignoreDirectories, $projectDir)) {
+        continue;
     }
+
+    $usedFiles[] = $relativePath;
+    $absoluteFilePath = $projectDir . '/' . $relativePath;
+
+    if (!file_exists($absoluteFilePath)) {
+        echo "Предупреждение: Файл не существует: $absoluteFilePath\n";
+        continue;
+    }
+
+    $content = file_get_contents($absoluteFilePath);
+
+    if ($removeStyleTag) {
+        $content = preg_replace('/<style.*?>.*?<\/style>/s', '', $content);
+    }
+
+    if ($removeHtmlComments) {
+        $content = preg_replace('/<!--.*?-->/s', '', $content);
+    }
+
+    if ($removeSingleLineComments) {
+        $content = preg_replace('!^\s*//.*?(\r?\n|\r)!m', '', $content);
+    }
+
+    if ($removeMultiLineComments) {
+        $content = preg_replace('!/\*[\s\S]*?\*/\s*!', '', $content);
+    }
+
+    $content = rtrim($content);
+
+    $lineCount = substr_count($content, PHP_EOL) + 1;
+    $startLine = $currentLine;
+    $endLine = $startLine + $lineCount - 1;
+
+    $rootFolderName = basename($projectDir);
+    $fullRelativePath = '/' . $rootFolderName . '/' . $relativePath;
+
+    $fileLinesInfo[] = "$fullRelativePath (строки $startLine - $endLine)";
+
+    $mergedContent .= "// Начало файла -> $fullRelativePath" . PHP_EOL;
+    $mergedContent .= $content . PHP_EOL;
+    $mergedContent .= "// Конец файла -> $fullRelativePath" . str_repeat(PHP_EOL, 2);
+
+    $currentLine = $endLine + 3;
 }
 
-// Обрезаем переносы в конце основного содержимого
 $mergedContent = rtrim($mergedContent, PHP_EOL);
 
-// Записываем содержимое в файл
 file_put_contents($outputFile, $mergedContent);
 
-// Подготовка и вывод информации о файлах и заключительного сообщения
 $consoleOutput = PHP_EOL . 'Ниже написано содержание прикреплённого файла в котором объединён код нескольких файлов проекта. Это содержание указывает на начальные и конечные строки файлов которые были объеденины в прикреплённый файл к этому сообщению:' . PHP_EOL;
 
 foreach ($fileLinesInfo as $info) {
@@ -223,8 +292,6 @@ foreach ($fileLinesInfo as $info) {
 
 $consoleOutput .= PHP_EOL . 'Отвечай, как опытный программист с более чем 10-летним стажем. Когда отвечаешь выбирай современные практики (лучшие подходы). После прочтения жди вопросы по этому коду, просто жди вопросов, не нужно ничего отвечать.' . str_repeat(PHP_EOL, 2);
 
-// Вывод в консоль
 echo $consoleOutput;
 
-// Проверяем наличие команды pbcopy и выполняем копирование в буфер обмена, если она доступна
 exec("which pbcopy > /dev/null && printf " . escapeshellarg(trim($consoleOutput)) . " | pbcopy");
