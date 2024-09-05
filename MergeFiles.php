@@ -51,7 +51,7 @@ class MergeFiles
             $absoluteFilePath = $this->projectDir . '/' . $relativePath;
 
             if (!file_exists($absoluteFilePath)) {
-                echo "Предупреждение: Файл не существует: $absoluteFilePath\n";
+                echo "Предупреждение: Файл не существует: $absoluteFilePath" . PHP_EOL;
                 continue;
             }
 
@@ -96,7 +96,7 @@ class MergeFiles
         }
 
         if ($this->removeEmptyLines) {
-            $content = preg_replace("/(^[\r\n]*|[\r\n]+)[\s\t]*[\r\n]+/", "\n", $content);
+            $content = preg_replace("/(^[\r\n]*|[\r\n]+)[\s\t]*[\r\n]+/", PHP_EOL, $content);
         }
 
         return rtrim($content);
@@ -116,7 +116,7 @@ class MergeFiles
                     $fileLinesInfo[] = "$currentFile (строки $startLine - " . ($startLine + $lineCount - 1) . ")";
                 }
                 $currentFile = $matches[1];
-                $startLine = $index + 2; // +2 чтобы пропустить строку "// Начало файла ->"
+                $startLine = $index + 2;
                 $lineCount = 0;
             } elseif (preg_match('/\/\/ Конец файла -> /', $line)) {
                 if ($currentFile) {
@@ -162,12 +162,12 @@ class MergeFiles
 
     private function scanDependencies($file, &$scannedFiles = [])
     {
-        echo PHP_EOL . "Сканирование зависимостей для файла: $file\n";
+        echo PHP_EOL . "Сканирование зависимостей для файла: $file" . PHP_EOL;
 
         $fullPath = $this->projectDir . '/' . ltrim($file, '/');
 
         if (!$this->shouldIncludeFile($fullPath, self::DEPENDENCY_EXTENSIONS)) {
-            echo "  Файл $file пропущен (не соответствует расширениям для зависимостей).\n";
+            echo "  Файл $file пропущен (не соответствует расширениям для зависимостей)." . PHP_EOL;
             return [];
         }
 
@@ -183,14 +183,14 @@ class MergeFiles
 
         if (preg_match_all($importRegex, $content, $matches)) {
             foreach ($matches[1] as $match) {
-                echo "  Найден импорт: $match\n";
+                echo "  Найден импорт: $match" . PHP_EOL;
                 $dependencyPath = $this->resolveDependencyPath($match, $file);
                 if ($dependencyPath && !$this->isIgnoredDirectory($this->projectDir . '/' . $dependencyPath, $this->ignoreDirectories, $this->dependencyScanRoot)) {
-                    echo "  Разрешен путь: $dependencyPath\n";
+                    echo "  Разрешен путь: $dependencyPath" . PHP_EOL;
                     $dependencies[] = $dependencyPath;
                     $dependencies = array_merge($dependencies, $this->scanDependencies($dependencyPath, $scannedFiles));
                 } else {
-                    echo "  Не удалось разрешить путь для: $match или путь находится в игнорируемой директории\n";
+                    echo "  Не удалось разрешить путь для: $match или путь находится в игнорируемой директории" . PHP_EOL;
                 }
             }
         }
@@ -255,10 +255,10 @@ class MergeFiles
         $allFiles = [];
         $dependencyFiles = [];
 
-        echo "Project Directory: {$this->projectDir}\n";
+        echo "Project Directory: {$this->projectDir}" . PHP_EOL;
 
         if (!is_dir($this->projectDir)) {
-            echo "Ошибка: Директория проекта не существует: {$this->projectDir}\n";
+            echo "Ошибка: Директория проекта не существует: {$this->projectDir}" . PHP_EOL;
             exit(1);
         }
 
@@ -297,7 +297,7 @@ class MergeFiles
                     }
                 }
             } else {
-                echo "Предупреждение: Путь не существует или не соответствует условиям: $fullPath\n";
+                echo "Предупреждение: Путь не существует или не соответствует условиям: $fullPath" . PHP_EOL;
             }
         }
 
@@ -307,7 +307,7 @@ class MergeFiles
             return !$this->isIgnoredDirectory($this->projectDir . '/' . $path, $this->ignoreDirectories, $this->projectDir);
         });
 
-        echo PHP_EOL . "Итоговый результат scanAllDependencies():\n";
+        echo PHP_EOL . "Итоговый результат scanAllDependencies():" . PHP_EOL;
         print_r($result);
 
         return $result;
