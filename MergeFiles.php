@@ -301,16 +301,13 @@ class MergeFiles
             }
         }
 
-        $result = $this->scanDependencies ? array_unique(array_merge($allFiles, $dependencyFiles)) : $allFiles;
+        return array_filter(
+            $this->scanDependencies ? array_unique(array_merge($allFiles, $dependencyFiles)) : $allFiles,
+            function($path) {
+                return !$this->isIgnoredDirectory($this->projectDir . '/' . $path, $this->ignoreDirectories, $this->projectDir);
+            }
+        );
 
-        $result = array_filter($result, function($path) {
-            return !$this->isIgnoredDirectory($this->projectDir . '/' . $path, $this->ignoreDirectories, $this->projectDir);
-        });
-
-        echo PHP_EOL . "Итоговый результат scanAllDependencies():" . PHP_EOL;
-        print_r($result);
-
-        return $result;
     }
 
     private function printConsoleOutput($fileLinesInfo)
