@@ -1,13 +1,97 @@
-# Содержание репозитория gpt-tools
 
-## [commit_generator.php](https://github.com/olegopro/gpt-tools/blob/main/commit_generator.php)
+# Инструменты для работы с файлами
 
-Этот скрипт на PHP используется для генерации названий и описаний коммитов с помощью API OpenAI. Он считывает данные из `stdin`, сохраняет их в файл, а затем отправляет запрос к API OpenAI, используя заданные инструкции и полученные данные. Скрипт также поддерживает работу через прокси и обрабатывает ошибки, связанные с cURL и API.
+Этот проект содержит набор утилит для работы с файлами, такими как объединение файлов, генерация коммитов и построение структуры директорий.
 
-## [draw_tree.php](https://github.com/olegopro/gpt-tools/blob/main/draw_tree.php)
+## Содержание
+1. [run_merge_files.php](#run_merge_filesphp)
+2. [commit_generator.php](#commit_generatorphp)
+3. [draw_tree.php](#draw_treephp)
 
-Этот PHP скрипт создаёт текстовое представление структуры директории (дерево файлов) и записывает его в файл. Скрипт позволяет указать путь к директории, расширения файлов для включения в дерево, а также игнорируемые директории. Результат работы скрипта - файл `directory_tree.txt`, содержащий структуру директории.
+---
 
-## [merge_files.php](https://github.com/olegopro/gpt-tools/blob/main/merge_files.php)
+## run_merge_files.php
 
-Этот скрипт на PHP предназначен для объединения содержимого нескольких файлов в один. Он сканирует указанные пути и директории, фильтрует файлы по расширениям и объединяет их содержимое в один файл, добавляя комментарии о начале и конце каждого файла. Результатом работы является файл `merged_files.txt`, содержащий объединённое содержимое выбранных файлов.
+Этот скрипт объединяет файлы в один.
+
+### Конфигурация
+
+| Параметр                | Тип      | Описание                                                                                          |
+|-------------------------|----------|---------------------------------------------------------------------------------------------------|
+| `projectDir`            | string   | Путь к директории проекта. Определяет корневую директорию для работы.                              |
+| `dependencyScanRoot`     | string   | Директория, откуда начинается сканирование зависимостей.                                           |
+| `paths`                 | array    | Список путей к папкам или файлам, которые должны быть объединены.                                  |
+| `scanDependencies`       | boolean  | Определяет, нужно ли сканировать зависимости для файлов.                                           |
+| `extensions`            | array    | Массив допустимых расширений файлов. Можно указать `*`, чтобы включить все файлы.                  |
+| `removeStyleTag`        | boolean  | Удалять ли теги `<style>` из файлов.                                                              |
+| `removeHtmlComments`    | boolean  | Удалять ли HTML комментарии.                                                                      |
+| `removeSingleLineComments` | boolean | Удалять ли однострочные комментарии.                                                             |
+| `removeMultiLineComments` | boolean | Удалять ли многострочные комментарии.                                                            |
+| `removeEmptyLines`      | boolean  | Удалять ли пустые строки.                                                                         |
+| `ignoreFiles`           | array    | Массив файлов, которые нужно игнорировать при объединении.                                         |
+| `ignoreDirectories`     | array    | Массив директорий, которые нужно игнорировать при сканировании.                                    |
+| `outputFile`            | string   | Путь к файлу, в который будет записан объединенный результат.                                      |
+
+### Пример использования
+
+```php
+$config = [
+    'projectDir' => '/project-directory',
+    'dependencyScanRoot' => '/project-directory/src',
+    'paths' => [
+        '/folder',
+        '/folder/file.php'
+    ],
+    'scanDependencies' => true,
+    'extensions' => ['php', 'vue', 'js', 'json', 'ts', 'html', 'css', 'scss'],
+    'removeStyleTag' => false,
+    'removeHtmlComments' => false,
+    'removeSingleLineComments' => false,
+    'removeMultiLineComments' => false,
+    'removeEmptyLines' => false,
+    'ignoreFiles' => ['ignore_this.php', 'ignore_that.js'],
+    'ignoreDirectories' => ['folder_to_ignore', 'another_folder_to_ignore'],
+    'outputFile' => 'merged_files.txt'
+];
+
+$merger = new MergeFiles($config);
+$merger->merge();
+```
+
+---
+
+## commit_generator.php
+
+Этот скрипт генерирует сообщения для коммитов, используя API OpenAI. Он получает информацию о разнице файлов из stdin и формирует название и описание коммита на основе этой информации.
+
+### Пример использования
+
+```bash
+git diff | php commit_generator.php "Дополнительные инструкции"
+```
+
+---
+
+## draw_tree.php
+
+Этот скрипт создает дерево файловой структуры для заданной директории и сохраняет его в файл `directory_tree.txt`.
+
+### Конфигурация
+
+| Параметр             | Тип    | Описание                                                                    |
+|----------------------|--------|-----------------------------------------------------------------------------|
+| `directoryPath`      | string | Путь к директории, для которой нужно построить дерево файлов.                |
+| `extensions`         | array  | Массив расширений файлов для включения в дерево.                             |
+| `ignoredDirectories` | array  | Массив папок, которые нужно игнорировать при построении дерева.              |
+
+### Пример использования
+
+```php
+$directoryPath = '/folder';
+$extensions = ['php', 'vue', 'js'];
+$ignoredDirectories = ['node_modules', 'vendor', '.git'];
+
+echo drawTree($directoryPath, '', true, $extensions, $ignoredDirectories);
+```
+
+Дерево будет записано в файл `directory_tree.txt`.
