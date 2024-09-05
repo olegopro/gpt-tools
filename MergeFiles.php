@@ -16,7 +16,7 @@ class MergeFiles
     private $ignoreDirectories;
     private $outputFile;
 
-    const DEPENDENCY_EXTENSIONS = ['vue', 'js', 'ts'];
+    const array DEPENDENCY_EXTENSIONS = ['vue', 'js', 'ts'];
 
     public function __construct(array $config)
     {
@@ -143,7 +143,7 @@ class MergeFiles
 
         foreach ($ignoreDirectories as $ignoredDir) {
             $ignoredDir = trim($ignoredDir, '/');
-            if (strpos($relativeFilePath . '/', $ignoredDir . '/') === 0 || $relativeFilePath === $ignoredDir) {
+            if (str_starts_with($relativeFilePath . '/', $ignoredDir . '/') || $relativeFilePath === $ignoredDir) {
                 return true;
             }
         }
@@ -186,13 +186,15 @@ class MergeFiles
                 echo "  Найден импорт: $match" . PHP_EOL;
                 $dependencyPath = $this->resolveDependencyPath($match, $file);
                 if ($dependencyPath && !$this->isIgnoredDirectory($this->projectDir . '/' . $dependencyPath, $this->ignoreDirectories, $this->dependencyScanRoot)) {
-                    echo "  Разрешен путь: $dependencyPath" . PHP_EOL;
+                    echo "  Определён путь: $dependencyPath" . PHP_EOL;
                     $dependencies[] = $dependencyPath;
                     $dependencies = array_merge($dependencies, $this->scanDependencies($dependencyPath, $scannedFiles));
                 } else {
-                    echo "  Не удалось разрешить путь для: $match или путь находится в игнорируемой директории" . PHP_EOL;
+                    echo "  Не удалось найти путь для $match" . PHP_EOL;
                 }
             }
+        } else {
+            echo "  Импорты не найдены в файле $file." . PHP_EOL;
         }
 
         return array_unique($dependencies);
@@ -202,7 +204,7 @@ class MergeFiles
     {
         $currentDir = dirname($currentFile);
 
-        if (strpos($importPath, './') === 0 || strpos($importPath, '../') === 0) {
+        if (str_starts_with($importPath, './') || str_starts_with($importPath, '../')) {
             $resolvedPath = realpath($this->dependencyScanRoot . '/' . $currentDir . '/' . $importPath);
             if ($resolvedPath && !$this->isIgnoredDirectory($resolvedPath, $this->ignoreDirectories, $this->dependencyScanRoot)) {
                 return $this->makeRelativePath($resolvedPath, $this->projectDir);
@@ -214,7 +216,7 @@ class MergeFiles
             return $this->makeRelativePath($foundPath, $this->projectDir);
         }
 
-        $extensions = ['.js', '.vue', '.ts'];
+        $extensions = array_map(fn($ext) => '.' . $ext, self::DEPENDENCY_EXTENSIONS);
         foreach ($extensions as $ext) {
             $foundPath = $this->findFileRecursively($this->dependencyScanRoot, $importPath . $ext);
             if ($foundPath) {
@@ -228,7 +230,7 @@ class MergeFiles
     private function findFileRecursively($dir, $filename)
     {
         $iterator = new RecursiveIteratorIterator(
-            new RecursiveDirectoryIterator($dir, RecursiveDirectoryIterator::SKIP_DOTS),
+            new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS),
             RecursiveIteratorIterator::SELF_FIRST
         );
 
@@ -255,10 +257,10 @@ class MergeFiles
         $allFiles = [];
         $dependencyFiles = [];
 
-        echo "Project Directory: {$this->projectDir}" . PHP_EOL;
+        echo "Project Directory: $this->projectDir" . PHP_EOL;
 
         if (!is_dir($this->projectDir)) {
-            echo "Ошибка: Директория проекта не существует: {$this->projectDir}" . PHP_EOL;
+            echo "Ошибка: Директория проекта не существует: $this->projectDir" . PHP_EOL;
             exit(1);
         }
 
@@ -277,7 +279,7 @@ class MergeFiles
                 }
             } elseif (is_dir($fullPath)) {
                 $iterator = new RecursiveIteratorIterator(
-                    new RecursiveDirectoryIterator($fullPath, RecursiveDirectoryIterator::SKIP_DOTS),
+                    new RecursiveDirectoryIterator($fullPath, FilesystemIterator::SKIP_DOTS),
                     RecursiveIteratorIterator::SELF_FIRST
                 );
 
