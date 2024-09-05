@@ -11,6 +11,7 @@ class MergeFiles
     private $removeHtmlComments;
     private $removeSingleLineComments;
     private $removeMultiLineComments;
+    private $removeEmptyLines;
     private $ignoreFiles;
     private $ignoreDirectories;
     private $outputFile;
@@ -28,6 +29,7 @@ class MergeFiles
         $this->removeHtmlComments = $config['removeHtmlComments'];
         $this->removeSingleLineComments = $config['removeSingleLineComments'];
         $this->removeMultiLineComments = $config['removeMultiLineComments'];
+        $this->removeEmptyLines = $config['removeEmptyLines'];
         $this->ignoreFiles = $config['ignoreFiles'];
         $this->ignoreDirectories = $config['ignoreDirectories'];
         $this->outputFile = $config['outputFile'];
@@ -37,8 +39,6 @@ class MergeFiles
     {
         $usedFiles = [];
         $mergedContent = '';
-        $currentLine = 1;
-        $fileLinesInfo = [];
 
         $allPaths = $this->scanAllDependencies();
 
@@ -57,45 +57,78 @@ class MergeFiles
 
             $content = file_get_contents($absoluteFilePath);
 
-            if ($this->removeStyleTag) {
-                $content = preg_replace('/<style.*?>.*?<\/style>/s', '', $content);
-            }
-
-            if ($this->removeHtmlComments) {
-                $content = preg_replace('/<!--.*?-->/s', '', $content);
-            }
-
-            if ($this->removeSingleLineComments) {
-                $content = preg_replace('!^\s*//.*?(\r?\n|\r)!m', '', $content);
-            }
-
-            if ($this->removeMultiLineComments) {
-                $content = preg_replace('!/\*[\s\S]*?\*/\s*!', '', $content);
-            }
-
-            $content = rtrim($content);
-
-            $lineCount = substr_count($content, PHP_EOL) + 1;
-            $startLine = $currentLine;
-            $endLine = $startLine + $lineCount - 1;
+            // Применяем фильтры к содержимому файла
+            $content = $this->applyFilters($content);
 
             $rootFolderName = basename($this->projectDir);
             $fullRelativePath = '/' . $rootFolderName . '/' . $relativePath;
 
-            $fileLinesInfo[] = "$fullRelativePath (строки $startLine - $endLine)";
-
             $mergedContent .= "// Начало файла -> $fullRelativePath" . PHP_EOL;
             $mergedContent .= $content . PHP_EOL;
             $mergedContent .= "// Конец файла -> $fullRelativePath" . str_repeat(PHP_EOL, 2);
-
-            $currentLine = $endLine + 3;
         }
 
         $mergedContent = rtrim($mergedContent, PHP_EOL);
 
         file_put_contents($this->outputFile, $mergedContent);
 
+        $fileLinesInfo = $this->calculateFileLinesInfo($mergedContent);
+
         $this->printConsoleOutput($fileLinesInfo);
+    }
+
+    private function applyFilters($content)
+    {
+        if ($this->removeStyleTag) {
+            $content = preg_replace('/<style.*?>.*?<\/style>/s', '', $content);
+        }
+
+        if ($this->removeHtmlComments) {
+            $content = preg_replace('/<!--.*?-->/s', '', $content);
+        }
+
+        if ($this->removeSingleLineComments) {
+            $content = preg_replace('!^\s*//.*?(\r?\n|\r)!m', '', $content);
+        }
+
+        if ($this->removeMultiLineComments) {
+            $content = preg_replace('!/\*[\s\S]*?\*/\s*!', '', $content);
+        }
+
+        if ($this->removeEmptyLines) {
+            $content = preg_replace("/(^[\r\n]*|[\r\n]+)[\s\t]*[\r\n]+/", "\n", $content);
+        }
+
+        return rtrim($content);
+    }
+
+    private function calculateFileLinesInfo($mergedContent)
+    {
+        $lines = explode(PHP_EOL, $mergedContent);
+        $fileLinesInfo = [];
+        $currentFile = null;
+        $startLine = 0;
+        $lineCount = 0;
+
+        foreach ($lines as $index => $line) {
+            if (preg_match('/\/\/ Начало файла -> (.+)/', $line, $matches)) {
+                if ($currentFile) {
+                    $fileLinesInfo[] = "$currentFile (строки $startLine - " . ($startLine + $lineCount - 1) . ")";
+                }
+                $currentFile = $matches[1];
+                $startLine = $index + 2; // +2 чтобы пропустить строку "// Начало файла ->"
+                $lineCount = 0;
+            } elseif (preg_match('/\/\/ Конец файла -> /', $line)) {
+                if ($currentFile) {
+                    $fileLinesInfo[] = "$currentFile (строки $startLine - " . ($startLine + $lineCount - 1) . ")";
+                    $currentFile = null;
+                }
+            } elseif ($currentFile) {
+                $lineCount++;
+            }
+        }
+
+        return $fileLinesInfo;
     }
 
     private function makeRelativePath($filePath, $projectDir)
@@ -107,7 +140,7 @@ class MergeFiles
     private function isIgnoredDirectory($filePath, $ignoreDirectories, $projectDir)
     {
         $relativeFilePath = trim(str_replace($projectDir, '', $filePath), '/');
-        
+
         foreach ($ignoreDirectories as $ignoredDir) {
             $ignoredDir = trim($ignoredDir, '/');
             if (strpos($relativeFilePath . '/', $ignoredDir . '/') === 0 || $relativeFilePath === $ignoredDir) {
@@ -132,7 +165,7 @@ class MergeFiles
         echo PHP_EOL . "Сканирование зависимостей для файла: $file\n";
 
         $fullPath = $this->projectDir . '/' . ltrim($file, '/');
-        
+
         if (!$this->shouldIncludeFile($fullPath, self::DEPENDENCY_EXTENSIONS)) {
             echo "  Файл $file пропущен (не соответствует расширениям для зависимостей).\n";
             return [];
@@ -232,8 +265,8 @@ class MergeFiles
         foreach ($this->paths as $path) {
             $fullPath = $this->projectDir . '/' . ltrim($path, '/');
             if (is_file($fullPath)) {
-                if (!in_array(basename($fullPath), $this->ignoreFiles) && 
-                    $this->shouldIncludeFile(basename($fullPath), $this->extensions) && 
+                if (!in_array(basename($fullPath), $this->ignoreFiles) &&
+                    $this->shouldIncludeFile(basename($fullPath), $this->extensions) &&
                     !$this->isIgnoredDirectory($fullPath, $this->ignoreDirectories, $this->projectDir)) {
                     $relativePath = $this->makeRelativePath($fullPath, $this->projectDir);
                     $allFiles[] = $relativePath;
@@ -247,7 +280,7 @@ class MergeFiles
                     new RecursiveDirectoryIterator($fullPath, RecursiveDirectoryIterator::SKIP_DOTS),
                     RecursiveIteratorIterator::SELF_FIRST
                 );
-                
+
                 foreach ($iterator as $file) {
                     if ($file->isFile()) {
                         $relativeFilePath = $this->makeRelativePath($file->getPathname(), $this->projectDir);
