@@ -2,26 +2,32 @@
 
 class MergeFiles
 {
-    private $projectDir;
-    private $dependencyScanRoot;
-    private $paths;
-    private $scanDependencies;
-    private $extensions;
-    private $removeStyleTag;
-    private $removeHtmlComments;
-    private $removeSingleLineComments;
-    private $removeMultiLineComments;
-    private $removeEmptyLines;
-    private $ignoreFiles;
-    private $ignoreDirectories;
-    private $outputFile;
+    private string $projectDir;
+    private string $dependencyScanRoot;
+    private array $paths;
+    private bool $scanDependencies;
+    private array $extensions;
+    private bool $removeStyleTag;
+    private bool $removeHtmlComments;
+    private bool $removeSingleLineComments;
+    private bool $removeMultiLineComments;
+    private bool $removeEmptyLines;
+    private array $ignoreFiles;
+    private array $ignoreDirectories;
+    private string $outputFile;
+    private int $maxDepth;
 
-    const array DEPENDENCY_EXTENSIONS = ['vue', 'js', 'ts'];
+    private array $fileIndex = [];
+    private array $dependencyCache = [];
+    private array $contentCache = [];
+    private array $scannedFiles = [];
+
+    private const array DEPENDENCY_EXTENSIONS = ['vue', 'js', 'ts'];
 
     public function __construct(array $config)
     {
         $this->projectDir = $config['projectDir'];
-        $this->dependencyScanRoot = $config['dependencyScanRoot'];
+        $this->dependencyScanRoot = $config['dependencyScanRoot'] ?? $this->projectDir;
         $this->paths = $config['paths'];
         $this->scanDependencies = $config['scanDependencies'];
         $this->extensions = $config['extensions'];
@@ -33,31 +39,165 @@ class MergeFiles
         $this->ignoreFiles = $config['ignoreFiles'];
         $this->ignoreDirectories = $config['ignoreDirectories'];
         $this->outputFile = $config['outputFile'];
+        $this->maxDepth = $config['maxDepth'] ?? 1000;
     }
 
-    public function merge()
+    public function merge(): void
     {
-        $usedFiles = [];
-        $mergedContent = '';
-
+        $this->buildFileIndex();
         $allPaths = $this->scanAllDependencies();
+        $mergedContent = $this->mergePaths($allPaths);
+        file_put_contents($this->outputFile, $mergedContent);
+        $this->printConsoleOutput($this->calculateFileLinesInfo($mergedContent));
+    }
 
-        foreach ($allPaths as $relativePath) {
-            if (in_array($relativePath, $usedFiles) || $this->isIgnoredDirectory($this->projectDir . '/' . $relativePath, $this->ignoreDirectories, $this->projectDir)) {
-                continue;
+    private function buildFileIndex(): void
+    {
+        $iterator = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($this->projectDir, FilesystemIterator::SKIP_DOTS),
+            RecursiveIteratorIterator::SELF_FIRST
+        );
+
+        foreach ($iterator as $file) {
+            if ($file->isFile() && $this->shouldIncludeFile($file->getFilename(), $this->extensions)) {
+                $relativePath = $this->makeRelativePath($file->getPathname(), $this->projectDir);
+                $this->fileIndex[$file->getBasename()] = $relativePath;
             }
+        }
+    }
 
-            $usedFiles[] = $relativePath;
+    private function scanAllDependencies(): array
+    {
+        $allFiles = [];
+        foreach ($this->paths as $path) {
+            $fullPath = $this->projectDir . '/' . ltrim($path, '/');
+            if (is_file($fullPath)) {
+                $this->processFile($fullPath, $allFiles);
+            } elseif (is_dir($fullPath)) {
+                $this->processDirectory($path, $allFiles);
+            } else {
+                echo "Предупреждение: Путь не существует или не соответствует условиям: $fullPath" . PHP_EOL;
+            }
+        }
+
+        return array_unique($allFiles);
+    }
+
+    private function processFile(string $fullPath, array &$allFiles): void
+    {
+        $relativePath = $this->makeRelativePath($fullPath, $this->projectDir);
+        if ($this->shouldIncludeFile(basename($fullPath), $this->extensions) &&
+            !$this->isIgnoredFile($fullPath) &&
+            !$this->isIgnoredDirectory($fullPath, $this->ignoreDirectories, $this->projectDir)) {
+            $allFiles[] = $relativePath;
+            if ($this->scanDependencies) {
+                $allFiles = array_merge($allFiles, $this->scanDependencies($relativePath));
+            }
+        }
+    }
+
+    private function processDirectory(string $path, array &$allFiles): void
+    {
+        foreach ($this->fileIndex as $relativePath) {
+            if (str_starts_with($relativePath, $path) &&
+                !$this->isIgnoredFile($this->projectDir . '/' . $relativePath) &&
+                !$this->isIgnoredDirectory($this->projectDir . '/' . $relativePath, $this->ignoreDirectories, $this->projectDir) &&
+                $this->shouldIncludeFile(basename($relativePath), $this->extensions)) {
+                $allFiles[] = $relativePath;
+                if ($this->scanDependencies) {
+                    $allFiles = array_merge($allFiles, $this->scanDependencies($relativePath));
+                }
+            }
+        }
+    }
+
+    private function scanDependencies(string $file, int $depth = 0): array
+    {
+        if ($depth > $this->maxDepth || isset($this->dependencyCache[$file])) {
+            return $this->dependencyCache[$file] ?? [];
+        }
+
+        $fullPath = $this->projectDir . '/' . ltrim($file, '/');
+        if (!file_exists($fullPath) || is_dir($fullPath) ||
+            !$this->shouldIncludeFile($fullPath, self::DEPENDENCY_EXTENSIONS) ||
+            $this->isIgnoredDirectory($fullPath, $this->ignoreDirectories, $this->projectDir)) {
+            return [];
+        }
+
+        if (in_array($file, $this->scannedFiles)) {
+            return [];
+        }
+        $this->scannedFiles[] = $file;
+
+        $content = $this->getFileContent($fullPath);
+        $dependencies = $this->extractDependencies($content, $file, $depth);
+
+        $this->dependencyCache[$file] = $dependencies;
+        array_pop($this->scannedFiles);
+        return $dependencies;
+    }
+
+    private function extractDependencies(string $content, string $currentFile, int $depth): array
+    {
+        $dependencies = [];
+        $importRegex = '/import\s+(?:{[^}]+}|\w+)\s+from\s+[\'"]([^\'"]+)[\'"]/';
+        if (preg_match_all($importRegex, $content, $matches)) {
+            foreach ($matches[1] as $match) {
+                $dependencyPath = $this->resolveDependencyPath($match, $currentFile);
+                if ($dependencyPath && !in_array($dependencyPath, $dependencies)) {
+                    $dependencies[] = $dependencyPath;
+                    if ($depth < $this->maxDepth) {
+                        $dependencies = array_merge($dependencies, $this->scanDependencies($dependencyPath, $depth + 1));
+                    }
+                }
+            }
+        }
+        return array_unique($dependencies);
+    }
+
+    private function resolveDependencyPath(string $importPath, string $currentFile): ?string
+    {
+        $currentDir = dirname($currentFile);
+        if (str_starts_with($importPath, './') || str_starts_with($importPath, '../')) {
+            $resolvedPath = realpath($this->dependencyScanRoot . '/' . $currentDir . '/' . $importPath);
+            if ($resolvedPath && !$this->isIgnoredDirectory($resolvedPath, $this->ignoreDirectories, $this->dependencyScanRoot)) {
+                return $this->makeRelativePath($resolvedPath, $this->projectDir);
+            }
+        }
+
+        $filename = basename($importPath);
+        foreach (self::DEPENDENCY_EXTENSIONS as $ext) {
+            $filenameWithExt = $filename . '.' . $ext;
+            if (isset($this->fileIndex[$filenameWithExt])) {
+                $fullPath = $this->projectDir . '/' . $this->fileIndex[$filenameWithExt];
+                if (!$this->isIgnoredDirectory($fullPath, $this->ignoreDirectories, $this->projectDir)) {
+                    return $this->fileIndex[$filenameWithExt];
+                }
+            }
+        }
+
+        // Попытка найти файл без расширения
+        if (isset($this->fileIndex[$filename])) {
+            $fullPath = $this->projectDir . '/' . $this->fileIndex[$filename];
+            if (!$this->isIgnoredDirectory($fullPath, $this->ignoreDirectories, $this->projectDir)) {
+                return $this->fileIndex[$filename];
+            }
+        }
+
+        return null;
+    }
+
+    private function mergePaths(array $paths): string
+    {
+        $mergedContent = '';
+        foreach ($paths as $relativePath) {
             $absoluteFilePath = $this->projectDir . '/' . $relativePath;
-
             if (!file_exists($absoluteFilePath)) {
                 echo "Предупреждение: Файл не существует: $absoluteFilePath" . PHP_EOL;
                 continue;
             }
 
-            $content = file_get_contents($absoluteFilePath);
-
-            // Применяем фильтры к содержимому файла
+            $content = $this->getFileContent($absoluteFilePath);
             $content = $this->applyFilters($content);
 
             $rootFolderName = basename($this->projectDir);
@@ -67,42 +207,47 @@ class MergeFiles
             $mergedContent .= $content . PHP_EOL;
             $mergedContent .= "// Конец файла -> $fullRelativePath" . str_repeat(PHP_EOL, 2);
         }
-
-        $mergedContent = rtrim($mergedContent, PHP_EOL);
-
-        file_put_contents($this->outputFile, $mergedContent);
-
-        $fileLinesInfo = $this->calculateFileLinesInfo($mergedContent);
-
-        $this->printConsoleOutput($fileLinesInfo);
+        return rtrim($mergedContent, PHP_EOL);
     }
 
-    private function applyFilters($content)
+    private function getFileContent(string $filePath): string
     {
-        if ($this->removeStyleTag) {
-            $content = preg_replace('/<style.*?>.*?<\/style>/s', '', $content);
+        if (!isset($this->contentCache[$filePath])) {
+            $this->contentCache[$filePath] = file_get_contents($filePath);
         }
-
-        if ($this->removeHtmlComments) {
-            $content = preg_replace('/<!--.*?-->/s', '', $content);
-        }
-
-        if ($this->removeSingleLineComments) {
-            $content = preg_replace('!^\s*//.*?(\r?\n|\r)!m', '', $content);
-        }
-
-        if ($this->removeMultiLineComments) {
-            $content = preg_replace('!/\*[\s\S]*?\*/\s*!', '', $content);
-        }
-
-        if ($this->removeEmptyLines) {
-            $content = preg_replace("/(^[\r\n]*|[\r\n]+)[\s\t]*[\r\n]+/", PHP_EOL, $content);
-        }
-
-        return rtrim($content);
+        return $this->contentCache[$filePath];
     }
 
-    private function calculateFileLinesInfo($mergedContent)
+    private function applyFilters(string $content): string
+    {
+        $patterns = [];
+        $replacements = [];
+
+        if ($this->removeStyleTag) {
+            $patterns[] = '/<style.*?>.*?<\/style>/s';
+            $replacements[] = '';
+        }
+        if ($this->removeHtmlComments) {
+            $patterns[] = '/<!--.*?-->/s';
+            $replacements[] = '';
+        }
+        if ($this->removeSingleLineComments) {
+            $patterns[] = '!^\s*//.*?(\r?\n|\r)!m';
+            $replacements[] = '';
+        }
+        if ($this->removeMultiLineComments) {
+            $patterns[] = '!/\*[\s\S]*?\*/\s*!';
+            $replacements[] = '';
+        }
+        if ($this->removeEmptyLines) {
+            $patterns[] = "/(^[\r\n]*|[\r\n]+)[\s\t]*[\r\n]+/";
+            $replacements[] = PHP_EOL;
+        }
+
+        return $patterns ? rtrim(preg_replace($patterns, $replacements, $content)) : $content;
+    }
+
+    private function calculateFileLinesInfo(string $mergedContent): array
     {
         $lines = explode(PHP_EOL, $mergedContent);
         $fileLinesInfo = [];
@@ -131,199 +276,45 @@ class MergeFiles
         return $fileLinesInfo;
     }
 
-    private function makeRelativePath($filePath, $projectDir)
+    private function printConsoleOutput(array $fileLinesInfo): void
     {
-        $relativePath = str_replace($projectDir, '', $filePath);
-        return ltrim($relativePath, '/');
-    }
-
-    private function isIgnoredDirectory($filePath, $ignoreDirectories, $projectDir)
-    {
-        $relativeFilePath = trim(str_replace($projectDir, '', $filePath), '/');
-
-        foreach ($ignoreDirectories as $ignoredDir) {
-            $ignoredDir = trim($ignoredDir, '/');
-            if (str_starts_with($relativeFilePath . '/', $ignoredDir . '/') || $relativeFilePath === $ignoredDir) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private function shouldIncludeFile($filename, $extensions)
-    {
-        if (in_array('*', $extensions)) {
-            return true;
-        }
-        $fileExtension = pathinfo($filename, PATHINFO_EXTENSION);
-        return in_array($fileExtension, $extensions);
-    }
-
-    private function scanDependencies($file, &$scannedFiles = [])
-    {
-        echo PHP_EOL . "Сканирование зависимостей для файла: $file" . PHP_EOL;
-
-        $fullPath = $this->projectDir . '/' . ltrim($file, '/');
-
-        if (!$this->shouldIncludeFile($fullPath, self::DEPENDENCY_EXTENSIONS)) {
-            echo "  Файл $file пропущен (не соответствует расширениям для зависимостей)." . PHP_EOL;
-            return [];
-        }
-
-        if (!file_exists($fullPath) || is_dir($fullPath) || in_array($file, $scannedFiles) || $this->isIgnoredDirectory($fullPath, $this->ignoreDirectories, $this->dependencyScanRoot)) {
-            return [];
-        }
-
-        $scannedFiles[] = $file;
-        $content = file_get_contents($fullPath);
-        $dependencies = [];
-
-        $importRegex = '/import\s+(?:{[^}]+}|\w+)\s+from\s+[\'"]([^\'"]+)[\'"]/';
-
-        if (preg_match_all($importRegex, $content, $matches)) {
-            foreach ($matches[1] as $match) {
-                echo "  Найден импорт: $match" . PHP_EOL;
-                $dependencyPath = $this->resolveDependencyPath($match, $file);
-                if ($dependencyPath && !$this->isIgnoredDirectory($this->projectDir . '/' . $dependencyPath, $this->ignoreDirectories, $this->dependencyScanRoot)) {
-                    echo "  Определён путь: $dependencyPath" . PHP_EOL;
-                    $dependencies[] = $dependencyPath;
-                    $dependencies = array_merge($dependencies, $this->scanDependencies($dependencyPath, $scannedFiles));
-                } else {
-                    echo "  Не удалось найти путь для $match" . PHP_EOL;
-                }
-            }
-        } else {
-            echo "  Импорты не найдены в файле $file." . PHP_EOL;
-        }
-
-        return array_unique($dependencies);
-    }
-
-    private function resolveDependencyPath($importPath, $currentFile)
-    {
-        $currentDir = dirname($currentFile);
-
-        if (str_starts_with($importPath, './') || str_starts_with($importPath, '../')) {
-            $resolvedPath = realpath($this->dependencyScanRoot . '/' . $currentDir . '/' . $importPath);
-            if ($resolvedPath && !$this->isIgnoredDirectory($resolvedPath, $this->ignoreDirectories, $this->dependencyScanRoot)) {
-                return $this->makeRelativePath($resolvedPath, $this->projectDir);
-            }
-        }
-
-        $foundPath = $this->findFileRecursively($this->dependencyScanRoot, $importPath);
-        if ($foundPath) {
-            return $this->makeRelativePath($foundPath, $this->projectDir);
-        }
-
-        $extensions = array_map(fn($ext) => '.' . $ext, self::DEPENDENCY_EXTENSIONS);
-        foreach ($extensions as $ext) {
-            $foundPath = $this->findFileRecursively($this->dependencyScanRoot, $importPath . $ext);
-            if ($foundPath) {
-                return $this->makeRelativePath($foundPath, $this->projectDir);
-            }
-        }
-
-        return null;
-    }
-
-    private function findFileRecursively($dir, $filename)
-    {
-        $iterator = new RecursiveIteratorIterator(
-            new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS),
-            RecursiveIteratorIterator::SELF_FIRST
-        );
-
-        foreach ($iterator as $file) {
-            if ($file->isDir()) {
-                if ($this->isIgnoredDirectory($file->getPathname(), $this->ignoreDirectories, $dir)) {
-                    $iterator->next();
-                    continue;
-                }
-            }
-
-            if ($file->isFile() && $file->getFilename() === basename($filename)) {
-                if (!$this->isIgnoredDirectory($file->getPathname(), $this->ignoreDirectories, $dir)) {
-                    return $file->getPathname();
-                }
-            }
-        }
-
-        return null;
-    }
-
-    private function scanAllDependencies()
-    {
-        $allFiles = [];
-        $dependencyFiles = [];
-
-        echo "Project Directory: $this->projectDir" . PHP_EOL;
-
-        if (!is_dir($this->projectDir)) {
-            echo "Ошибка: Директория проекта не существует: $this->projectDir" . PHP_EOL;
-            exit(1);
-        }
-
-        foreach ($this->paths as $path) {
-            $fullPath = $this->projectDir . '/' . ltrim($path, '/');
-            if (is_file($fullPath)) {
-                if (!in_array(basename($fullPath), $this->ignoreFiles) &&
-                    $this->shouldIncludeFile(basename($fullPath), $this->extensions) &&
-                    !$this->isIgnoredDirectory($fullPath, $this->ignoreDirectories, $this->projectDir)) {
-                    $relativePath = $this->makeRelativePath($fullPath, $this->projectDir);
-                    $allFiles[] = $relativePath;
-                    if ($this->scanDependencies) {
-                        $dependencies = $this->scanDependencies($relativePath);
-                        $dependencyFiles = array_merge($dependencyFiles, $dependencies);
-                    }
-                }
-            } elseif (is_dir($fullPath)) {
-                $iterator = new RecursiveIteratorIterator(
-                    new RecursiveDirectoryIterator($fullPath, FilesystemIterator::SKIP_DOTS),
-                    RecursiveIteratorIterator::SELF_FIRST
-                );
-
-                foreach ($iterator as $file) {
-                    if ($file->isFile()) {
-                        $relativeFilePath = $this->makeRelativePath($file->getPathname(), $this->projectDir);
-                        if (!in_array($file->getBasename(), $this->ignoreFiles) &&
-                            !$this->isIgnoredDirectory($file->getPathname(), $this->ignoreDirectories, $this->projectDir) &&
-                            $this->shouldIncludeFile($file->getBasename(), $this->extensions)
-                        ) {
-                            $allFiles[] = $relativeFilePath;
-                            if ($this->scanDependencies) {
-                                $dependencies = $this->scanDependencies($relativeFilePath);
-                                $dependencyFiles = array_merge($dependencyFiles, $dependencies);
-                            }
-                        }
-                    }
-                }
-            } else {
-                echo "Предупреждение: Путь не существует или не соответствует условиям: $fullPath" . PHP_EOL;
-            }
-        }
-
-        return array_filter(
-            $this->scanDependencies ? array_unique(array_merge($allFiles, $dependencyFiles)) : $allFiles,
-            function($path) {
-                return !$this->isIgnoredDirectory($this->projectDir . '/' . $path, $this->ignoreDirectories, $this->projectDir);
-            }
-        );
-
-    }
-
-    private function printConsoleOutput($fileLinesInfo)
-    {
-        $consoleOutput = PHP_EOL . 'Ниже написано содержание прикреплённого файла в котором объединён код нескольких файлов проекта. Это содержание указывает на начальные и конечные строки файлов которые были объеденины в прикреплённый файл к этому сообщению:' . PHP_EOL;
+        $consoleOutput = 'Ниже написано содержание прикреплённого файла в котором объединён код нескольких файлов проекта. Это содержание указывает на начальные и конечные строки файлов которые были объеденины в прикреплённый файл к этому сообщению:' . PHP_EOL;
 
         foreach ($fileLinesInfo as $info) {
             $consoleOutput .= $info . PHP_EOL;
         }
 
         $consoleOutput .= PHP_EOL . 'Отвечай, как опытный программист с более чем 10-летним стажем. Когда отвечаешь выбирай современные практики (лучшие подходы). После прочтения жди вопросы по этому коду, просто жди вопросов, не нужно ничего отвечать.' . str_repeat(PHP_EOL, 2);
-
         echo $consoleOutput;
 
         exec("which pbcopy > /dev/null && printf " . escapeshellarg(trim($consoleOutput)) . " | pbcopy");
+    }
+
+    private function makeRelativePath(string $filePath, string $basePath): string
+    {
+        $relativePath = str_replace($basePath, '', $filePath);
+        return ltrim($relativePath, '/');
+    }
+
+    private function isIgnoredDirectory(string $filePath, array $ignoreDirectories, string $basePath): bool
+    {
+        $relativeFilePath = trim(str_replace($basePath, '', $filePath), '/');
+        foreach ($ignoreDirectories as $ignoredDir) {
+            $ignoredDir = trim($ignoredDir, '/');
+            if (str_starts_with($relativeFilePath, $ignoredDir)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private function isIgnoredFile(string $filePath): bool
+    {
+        return in_array(basename($filePath), $this->ignoreFiles);
+    }
+
+    private function shouldIncludeFile(string $filename, array $extensions): bool
+    {
+        return in_array('*', $extensions) || in_array(pathinfo($filename, PATHINFO_EXTENSION), $extensions);
     }
 }

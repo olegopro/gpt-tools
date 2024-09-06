@@ -15,10 +15,10 @@ $config = [
     'removeHtmlComments' => false,
     'removeSingleLineComments' => false,
     'removeMultiLineComments' => false,
-    'removeEmptyLines' => false,
-    'ignoreFiles' => ['ignore_this.php', 'ignore_that.js'],
-    'ignoreDirectories' => ['folder_to_ignore', 'another_folder_to_ignore'],
-    'outputFile' => 'merged_files.txt'
+    'removeEmptyLines' => true,
+    'ignoreFiles' => [],
+    'ignoreDirectories' => ['node_modules', '.git'],
+    'outputFile' => 'merged_files.txt',
 ];
 
 $merger = new MergeFiles($config);
