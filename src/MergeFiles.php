@@ -22,6 +22,7 @@ class MergeFiles
     private array $ignoreDirectories;
     private string $outputFile;
     private int $maxDepth;
+    private string $fileListOutputFile;
 
     // Внутренние кеши для оптимизации
     private array $fileIndex = [];  // Индекс файлов в проекте для быстрого поиска по имени.
@@ -52,6 +53,7 @@ class MergeFiles
      *  - ignoreDirectories (array): Массив директорий для игнорирования.
      *  - outputFile (string): Имя файла, в который будет записан результат объединения.
      *  - maxDepth (int, опционально): Максимальная глубина рекурсивного сканирования зависимостей.
+     *  - fileListOutputFile (string): Имя файла, в который будет записан список объединённых файлов.
      */
     public function __construct(array $config)
     {
@@ -71,6 +73,7 @@ class MergeFiles
         $this->ignoreDirectories = $config['ignoreDirectories'];
         $this->outputFile = $config['outputFile'];
         $this->maxDepth = $config['maxDepth'] ?? 1000;
+        $this->fileListOutputFile = $config['fileListOutputFile'] ?? 'file_list.txt';
     }
 
     /**
@@ -93,6 +96,9 @@ class MergeFiles
 
         // Печатаем результат объединения с информацией о строках.
         $this->printConsoleOutput($this->calculateFileLinesInfo($mergedContent));
+
+        // Печатаем результат объединения с информацией о строках и сохраняем в файл.
+        $this->printAndSaveFileList($this->calculateFileLinesInfo($mergedContent));
     }
 
     /**
@@ -466,6 +472,20 @@ class MergeFiles
 
         // Если доступна команда pbcopy (для macOS), копируем результат в буфер обмена.
         exec("which pbcopy > /dev/null && printf " . escapeshellarg(trim($consoleOutput)) . " | pbcopy");
+    }
+
+    private function printAndSaveFileList(array $fileLinesInfo): void
+    {
+        $consoleOutput = '';
+        $fileListContent = '';
+
+        foreach ($fileLinesInfo as $info) {
+            $consoleOutput .= $info . PHP_EOL;
+            $fileListContent .= $info . PHP_EOL;
+        }
+
+        echo $consoleOutput;
+        file_put_contents($this->fileListOutputFile, $fileListContent);
     }
 
     /**

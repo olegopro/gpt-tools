@@ -1,6 +1,8 @@
 <?php
 
-require_once 'MergeFiles.php';
+require_once 'src/MergeFiles.php';
+require_once 'src/StructureVisualizer.php';
+require_once 'src/StructureVisualizerManager.php';
 
 $config = [
     'projectDir'               => '/project-directory',
@@ -19,7 +21,8 @@ $config = [
     'ignoreFiles'              => [],
     'ignoreDirectories'        => ['node_modules', '.git', '.idea'],
     'outputFile'               => 'merged_files.txt',
+    'fileListOutputFile'       => 'file_list.txt',
 ];
 
-$merger = new MergeFiles($config);
-$merger->merge();
+(new MergeFiles($config))->merge();
+(new StructureVisualizerManager())->visualize();
