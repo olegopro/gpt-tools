@@ -7,20 +7,21 @@
  */
 class MergeFiles
 {
-    private string $projectDir;  // Путь к корневой директории проекта, в которой находятся файлы для объединения.
-    private string $dependencyScanRoot;  // Директория для поиска зависимостей; по умолчанию совпадает с корневой директорией проекта.
-    private array $paths;  // Массив путей, в которых будут искаться файлы для объединения.
-    private bool $scanDependencies;  // Флаг, указывающий на необходимость сканирования зависимостей (import'ов) в файлах.
-    private array $extensions;  // Массив расширений файлов, которые должны быть включены в объединение (например, ['php', 'js', 'vue']).
-    private bool $removeStyleTag;  // Если true, из файлов будут удалены теги <style>.
-    private bool $removeHtmlComments;  // Если true, из файлов будут удалены HTML-комментарии (<!-- ... -->).
-    private bool $removeSingleLineComments;  // Если true, будут удалены однострочные комментарии (// ...).
-    private bool $removeMultiLineComments;  // Если true, будут удалены многострочные комментарии (/* ... */).
-    private bool $removeEmptyLines;  // Если true, будут удалены пустые строки.
-    private array $ignoreFiles;  // Массив имен файлов, которые следует игнорировать при объединении.
-    private array $ignoreDirectories;  // Массив директорий, которые следует игнорировать.
-    private string $outputFile;  // Путь к итоговому файлу, куда будет записан результат объединения.
-    private int $maxDepth;  // Максимальная глубина рекурсивного сканирования зависимостей.
+    private string $projectDir;
+    private string $dependencyScanRoot;
+    private array $paths;
+    private bool $scanDependencies;
+    private array $extensions;
+    private bool $removeStyleTag;
+    private bool $removeHtmlComments;
+    private bool $removeSingleLineComments;
+    private bool $removeMultiLineComments;
+    private bool $removeEmptyLines;
+    private bool $includeInstructions;
+    private array $ignoreFiles;
+    private array $ignoreDirectories;
+    private string $outputFile;
+    private int $maxDepth;
 
     // Внутренние кеши для оптимизации
     private array $fileIndex = [];  // Индекс файлов в проекте для быстрого поиска по имени.
@@ -46,6 +47,7 @@ class MergeFiles
      *  - removeSingleLineComments (bool): Удалять ли однострочные комментарии.
      *  - removeMultiLineComments (bool): Удалять ли многострочные комментарии.
      *  - removeEmptyLines (bool): Удалять ли пустые строки из файлов.
+     *  - includeInstructions (bool): Включать ли инструкции в консольный вывод.
      *  - ignoreFiles (array): Массив файлов для игнорирования при объединении.
      *  - ignoreDirectories (array): Массив директорий для игнорирования.
      *  - outputFile (string): Имя файла, в который будет записан результат объединения.
@@ -55,7 +57,7 @@ class MergeFiles
     {
         // Инициализация основных параметров
         $this->projectDir = $config['projectDir'];
-        $this->dependencyScanRoot = $config['dependencyScanRoot'] ?? $this->projectDir;  // Если не указано, используется projectDir.
+        $this->dependencyScanRoot = $config['dependencyScanRoot'] ?? $this->projectDir;
         $this->paths = $config['paths'];
         $this->scanDependencies = $config['scanDependencies'];
         $this->extensions = $config['extensions'];
@@ -64,10 +66,11 @@ class MergeFiles
         $this->removeSingleLineComments = $config['removeSingleLineComments'];
         $this->removeMultiLineComments = $config['removeMultiLineComments'];
         $this->removeEmptyLines = $config['removeEmptyLines'];
+        $this->includeInstructions = $config['includeInstructions'] ?? true;
         $this->ignoreFiles = $config['ignoreFiles'];
         $this->ignoreDirectories = $config['ignoreDirectories'];
         $this->outputFile = $config['outputFile'];
-        $this->maxDepth = $config['maxDepth'] ?? 1000;  // Устанавливаем значение по умолчанию для максимальной глубины.
+        $this->maxDepth = $config['maxDepth'] ?? 1000;
     }
 
     /**
@@ -445,16 +448,20 @@ class MergeFiles
      */
     private function printConsoleOutput(array $fileLinesInfo): void
     {
-        // Начинаем формировать вывод в консоль.
-        $consoleOutput = 'Ниже написано содержание прикреплённого файла в котором объединён код нескольких файлов проекта. Это содержание указывает на начальные и конечные строки файлов которые были объеденины в прикреплённый файл к этому сообщению:' . PHP_EOL;
+        $consoleOutput = '';
 
-        // Добавляем информацию о каждом файле.
+        if ($this->includeInstructions) {
+            $consoleOutput .= 'Ниже написано содержание прикреплённого файла в котором объединён код нескольких файлов проекта. Это содержание указывает на начальные и конечные строки файлов которые были объеденины в прикреплённый файл к этому сообщению:' . PHP_EOL;
+        }
+
         foreach ($fileLinesInfo as $info) {
             $consoleOutput .= $info . PHP_EOL;
         }
 
-        // Выводим результат на консоль.
-        $consoleOutput .= PHP_EOL . 'Отвечай, как опытный программист с более чем 10-летним стажем. Когда отвечаешь выбирай современные практики (лучшие подходы). После прочтения жди вопросы по этому коду, просто жди вопросов, не нужно ничего отвечать.' . str_repeat(PHP_EOL, 2);
+        if ($this->includeInstructions) {
+            $consoleOutput .= PHP_EOL . 'Отвечай, как опытный программист с более чем 10-летним стажем. Когда отвечаешь выбирай современные практики (лучшие подходы). После прочтения жди вопросы по этому коду, просто жди вопросов, не нужно ничего отвечать.' . str_repeat(PHP_EOL, 2);
+        }
+
         echo $consoleOutput;
 
         // Если доступна команда pbcopy (для macOS), копируем результат в буфер обмена.

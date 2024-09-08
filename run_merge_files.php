@@ -3,22 +3,22 @@
 require_once 'MergeFiles.php';
 
 $config = [
-    'projectDir' => '/project-directory',
-    'dependencyScanRoot' => '/project-directory/src',
-    'paths' => [
+    'projectDir'               => '/project-directory',
+    'paths'                    => [
         '/folder',
         '/folder/file.php'
     ],
-    'scanDependencies' => true,
-    'extensions' => ['php', 'vue', 'js', 'json', 'ts', 'html', 'css', 'scss'],
-    'removeStyleTag' => false,
-    'removeHtmlComments' => false,
+    'scanDependencies'         => true,
+    'extensions'               => ['php', 'vue', 'js', 'json', 'ts', 'html', 'css', 'scss'],
+    'removeStyleTag'           => false,
+    'removeHtmlComments'       => false,
     'removeSingleLineComments' => false,
-    'removeMultiLineComments' => false,
-    'removeEmptyLines' => true,
-    'ignoreFiles' => [],
-    'ignoreDirectories' => ['node_modules', '.git'],
-    'outputFile' => 'merged_files.txt',
+    'removeMultiLineComments'  => false,
+    'removeEmptyLines'         => true,
+    'includeInstructions'      => false,
+    'ignoreFiles'              => [],
+    'ignoreDirectories'        => ['node_modules', '.git', '.idea'],
+    'outputFile'               => 'merged_files.txt',
 ];
 
 $merger = new MergeFiles($config);
