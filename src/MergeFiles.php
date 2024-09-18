@@ -255,7 +255,7 @@ class MergeFiles
         $dependencies = [];  // Массив для хранения зависимостей.
 
         // Регулярное выражение для поиска импортов.
-        $importRegex = '/import\s+(?:{[^}]+}|\w+)\s+from\s+[\'"]([^\'"]+)[\'"]/';
+        $importRegex = '/import\s+(?:(?:\w+\s*,\s*)?(?:{[^}]+})?|\w+|\*\s+as\s+\w+)\s+from\s+[\'"]([^\'"]+)[\'"]/';
         if (preg_match_all($importRegex, $content, $matches)) {
             // Обрабатываем каждый найденный import.
             foreach ($matches[1] as $match) {
