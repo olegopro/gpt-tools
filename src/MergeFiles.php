@@ -94,10 +94,7 @@ class MergeFiles
         // Записываем результат в выходной файл.
         file_put_contents($this->outputFile, $mergedContent);
 
-        // Печатаем результат объединения с информацией о строках.
-        $this->printConsoleOutput($this->calculateFileLinesInfo($mergedContent));
-
-        // Печатаем результат объединения с информацией о строках и сохраняем в файл.
+        // Выводим информацию о файлах в консоль, сохраняем в файл и копируем в буфер обмена
         $this->printAndSaveFileList($this->calculateFileLinesInfo($mergedContent));
     }
 
@@ -474,18 +471,35 @@ class MergeFiles
         exec("which pbcopy > /dev/null && printf " . escapeshellarg(trim($consoleOutput)) . " | pbcopy");
     }
 
+    /**
+     * Выводит информацию о строках файлов в итоговом контенте в консоль,
+     * сохраняет эту информацию в файл и копирует в буфер обмена (если доступно).
+     *
+     * @param array $fileLinesInfo Массив информации о начальных и конечных строках каждого файла.
+     */
     private function printAndSaveFileList(array $fileLinesInfo): void
     {
         $consoleOutput = '';
         $fileListContent = '';
+
+        if ($this->includeInstructions) {
+            $consoleOutput .= 'Ниже написано содержание прикреплённого файла в котором объединён код нескольких файлов проекта. Это содержание указывает на начальные и конечные строки файлов которые были объеденины в прикреплённый файл к этому сообщению:' . PHP_EOL;
+        }
 
         foreach ($fileLinesInfo as $info) {
             $consoleOutput .= $info . PHP_EOL;
             $fileListContent .= $info . PHP_EOL;
         }
 
+        if ($this->includeInstructions) {
+            $consoleOutput .= PHP_EOL . 'Отвечай, как опытный программист с более чем 10-летним стажем. Когда отвечаешь выбирай современные практики (лучшие подходы). После прочтения жди вопросы по этому коду, просто жди вопросов, не нужно ничего отвечать.' . str_repeat(PHP_EOL, 2);
+        }
+
         echo $consoleOutput;
         file_put_contents($this->fileListOutputFile, $fileListContent);
+
+        // Если доступна команда pbcopy (для macOS), копируем результат в буфер обмена.
+        exec("which pbcopy > /dev/null && printf " . escapeshellarg(trim($consoleOutput)) . " | pbcopy");
     }
 
     /**
