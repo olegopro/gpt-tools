@@ -115,7 +115,9 @@ class MergeFiles
             if ($file->isFile() && $this->shouldIncludeFile($file->getFilename(), $this->extensions)) {
                 // Преобразуем путь к файлу в относительный для удобства хранения.
                 $relativePath = $this->makeRelativePath($file->getPathname(), $this->projectDir);
-                $this->fileIndex[$file->getBasename()] = $relativePath;  // Сохраняем базовое имя файла и его путь.
+
+                // Сохраняем относительный путь файла как ключ, а не его базовое имя.
+                $this->fileIndex[$relativePath] = $relativePath;
             }
         }
     }
@@ -280,37 +282,19 @@ class MergeFiles
      */
     private function resolveDependencyPath(string $importPath, string $currentFile): ?string
     {
-        $currentDir = dirname($currentFile);  // Получаем директорию текущего файла.
+        $currentDir = dirname($currentFile);
 
-        // Проверяем, является ли путь относительным и существует ли такой файл.
-        if (str_starts_with($importPath, './') || str_starts_with($importPath, '../')) {
-            $resolvedPath = realpath($this->dependencyScanRoot . '/' . $currentDir . '/' . $importPath);
-            if ($resolvedPath && !$this->isIgnoredDirectory($resolvedPath, $this->ignoreDirectories, $this->dependencyScanRoot)) {
-                return $this->makeRelativePath($resolvedPath, $this->projectDir);
-            }
-        }
-
-        // Пытаемся найти файл с расширениями из списка DEPENDENCY_EXTENSIONS.
-        $filename = basename($importPath);
+        // Пытаемся найти файл с расширениями из списка DEPENDENCY_EXTENSIONS
         foreach (self::DEPENDENCY_EXTENSIONS as $ext) {
-            $filenameWithExt = $filename . '.' . $ext;
-            if (isset($this->fileIndex[$filenameWithExt])) {
-                $fullPath = $this->projectDir . '/' . $this->fileIndex[$filenameWithExt];
-                if (!$this->isIgnoredDirectory($fullPath, $this->ignoreDirectories, $this->projectDir)) {
-                    return $this->fileIndex[$filenameWithExt];
-                }
+            $filenameWithExt = $importPath . '.' . $ext;
+
+            // Если путь файла совпадает с относительным путём из индекса.
+            if (isset($this->fileIndex[$currentDir . '/' . $filenameWithExt])) {
+                return $this->fileIndex[$currentDir . '/' . $filenameWithExt];
             }
         }
 
-        // Если файл найден без расширения, возвращаем его.
-        if (isset($this->fileIndex[$filename])) {
-            $fullPath = $this->projectDir . '/' . $this->fileIndex[$filename];
-            if (!$this->isIgnoredDirectory($fullPath, $this->ignoreDirectories, $this->projectDir)) {
-                return $this->fileIndex[$filename];
-            }
-        }
-
-        return null;  // Путь не найден.
+        return null;
     }
 
     /**
