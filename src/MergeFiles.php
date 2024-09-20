@@ -184,23 +184,25 @@ class MergeFiles
      */
     private function processDirectory(string $path, array &$allFiles): void
     {
-        // Проходим по всем файлам, уже добавленным в индекс файлов проекта.
+        $pathWithSlash = rtrim($path, '/') . '/';  // Убедимся, что путь оканчивается на слеш
+
         foreach ($this->fileIndex as $relativePath) {
-            // Проверяем, что файл находится в данной директории, и что его не нужно игнорировать.
-            if (str_starts_with($relativePath, $path) &&
+            // Проверяем, что файл находится точно в директории или её поддиректории
+            if (str_starts_with($relativePath, $pathWithSlash) &&
                 !$this->isIgnoredFile($this->projectDir . '/' . $relativePath) &&
                 !$this->isIgnoredDirectory($this->projectDir . '/' . $relativePath, $this->ignoreDirectories, $this->projectDir) &&
                 $this->shouldIncludeFile(basename($relativePath), $this->extensions)) {
-                // Добавляем файл в список.
+
                 $allFiles[] = $relativePath;
 
-                // Если включено сканирование зависимостей, сканируем файл.
+                // Если включено сканирование зависимостей, продолжаем сканирование
                 if ($this->scanDependencies) {
                     $allFiles = array_merge($allFiles, $this->scanDependencies($relativePath));
                 }
             }
         }
     }
+
 
     /**
      * Рекурсивно сканирует зависимости файла (например, import'ы) и добавляет их в список для объединения.
