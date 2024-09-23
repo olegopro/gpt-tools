@@ -8,7 +8,6 @@
 class MergeFiles
 {
     private string $projectDir;
-    private string $dependencyScanRoot;
     private array $paths;
     private bool $scanDependencies;
     private array $extensions;
@@ -59,7 +58,6 @@ class MergeFiles
     {
         // Инициализация основных параметров
         $this->projectDir = $config['projectDir'];
-        $this->dependencyScanRoot = $config['dependencyScanRoot'] ?? $this->projectDir;
         $this->paths = $config['paths'];
         $this->scanDependencies = $config['scanDependencies'];
         $this->extensions = $config['extensions'];
@@ -104,20 +102,18 @@ class MergeFiles
      */
     private function buildFileIndex(): void
     {
-        // Используем рекурсивный итератор для обхода всех файлов в директории проекта.
         $iterator = new RecursiveIteratorIterator(
             new RecursiveDirectoryIterator($this->projectDir, FilesystemIterator::SKIP_DOTS),
             RecursiveIteratorIterator::SELF_FIRST
         );
 
-        // Обрабатываем каждый файл, который подходит под указанные расширения.
         foreach ($iterator as $file) {
             if ($file->isFile() && $this->shouldIncludeFile($file->getFilename(), $this->extensions)) {
-                // Преобразуем путь к файлу в относительный для удобства хранения.
                 $relativePath = $this->makeRelativePath($file->getPathname(), $this->projectDir);
-
-                // Сохраняем относительный путь файла как ключ, а не его базовое имя.
-                $this->fileIndex[$relativePath] = $relativePath;
+                if (!$this->isIgnoredDirectory($file->getPathname(), $this->ignoreDirectories, $this->projectDir)) {
+                    $this->fileIndex[$file->getBasename()] = $relativePath;
+                    $this->fileIndex[$relativePath] = $relativePath;
+                }
             }
         }
     }
@@ -203,7 +199,6 @@ class MergeFiles
         }
     }
 
-
     /**
      * Рекурсивно сканирует зависимости файла (например, import'ы) и добавляет их в список для объединения.
      *
@@ -213,32 +208,28 @@ class MergeFiles
      */
     private function scanDependencies(string $file, int $depth = 0): array
     {
-        // Проверяем, не превышена ли максимальная глубина рекурсии или не закешированы ли зависимости.
         if ($depth > $this->maxDepth || isset($this->dependencyCache[$file])) {
             return $this->dependencyCache[$file] ?? [];
         }
 
-        // Преобразуем путь в полный и проверяем его валидность.
-        $fullPath = $this->projectDir . '/' . ltrim($file, '/');
+        $fullPath = $this->projectDir . '/' . $file;
         if (!file_exists($fullPath) || is_dir($fullPath) ||
             !$this->shouldIncludeFile($fullPath, self::DEPENDENCY_EXTENSIONS) ||
             $this->isIgnoredDirectory($fullPath, $this->ignoreDirectories, $this->projectDir)) {
             return [];
         }
 
-        // Проверяем, что файл ещё не сканировался.
         if (in_array($file, $this->scannedFiles)) {
             return [];
         }
-        $this->scannedFiles[] = $file;  // Помечаем файл как сканированный.
 
-        // Получаем содержимое файла и извлекаем зависимости.
+        $this->scannedFiles[] = $file;
+
         $content = $this->getFileContent($fullPath);
         $dependencies = $this->extractDependencies($content, $file, $depth);
 
-        // Кешируем найденные зависимости.
         $this->dependencyCache[$file] = $dependencies;
-        array_pop($this->scannedFiles);  // Убираем файл из списка сканированных для текущего уровня рекурсии.
+        array_pop($this->scannedFiles);
 
         return $dependencies;
     }
@@ -253,17 +244,12 @@ class MergeFiles
      */
     private function extractDependencies(string $content, string $currentFile, int $depth): array
     {
-        $dependencies = [];  // Массив для хранения зависимостей.
-
-        // Регулярное выражение для поиска импортов.
+        $dependencies = [];
         $importRegex = '/import\s+(?:(?:\w+\s*,\s*)?(?:{[^}]+})?|\w+|\*\s+as\s+\w+)\s+from\s+[\'"]([^\'"]+)[\'"]/';
         if (preg_match_all($importRegex, $content, $matches)) {
-            // Обрабатываем каждый найденный import.
             foreach ($matches[1] as $match) {
-                // Разрешаем относительный путь для найденной зависимости.
                 $dependencyPath = $this->resolveDependencyPath($match, $currentFile);
                 if ($dependencyPath && !in_array($dependencyPath, $dependencies)) {
-                    // Добавляем зависимость в список и продолжаем сканирование на более глубоком уровне рекурсии.
                     $dependencies[] = $dependencyPath;
                     if ($depth < $this->maxDepth) {
                         $dependencies = array_merge($dependencies, $this->scanDependencies($dependencyPath, $depth + 1));
@@ -271,8 +257,7 @@ class MergeFiles
                 }
             }
         }
-
-        return array_unique($dependencies);  // Возвращаем уникальные зависимости.
+        return array_unique($dependencies);
     }
 
     /**
@@ -286,17 +271,47 @@ class MergeFiles
     {
         $currentDir = dirname($currentFile);
 
-        // Пытаемся найти файл с расширениями из списка DEPENDENCY_EXTENSIONS
-        foreach (self::DEPENDENCY_EXTENSIONS as $ext) {
-            $filenameWithExt = $importPath . '.' . $ext;
-
-            // Если путь файла совпадает с относительным путём из индекса.
-            if (isset($this->fileIndex[$currentDir . '/' . $filenameWithExt])) {
-                return $this->fileIndex[$currentDir . '/' . $filenameWithExt];
+        // Проверяем относительные пути
+        if (str_starts_with($importPath, './') || str_starts_with($importPath, '../')) {
+            $resolvedPath = realpath($this->projectDir . '/' . $currentDir . '/' . $importPath);
+            if ($resolvedPath && !$this->isIgnoredDirectory($resolvedPath, $this->ignoreDirectories, $this->projectDir)) {
+                $relativePath = $this->makeRelativePath($resolvedPath, $this->projectDir);
+                if (isset($this->fileIndex[$relativePath])) {
+                    return $relativePath;
+                }
             }
         }
 
-        return null;
+        // Проверяем абсолютные пути (относительно корня проекта)
+        $absolutePath = $this->projectDir . '/' . ltrim($importPath, '/');
+        if (file_exists($absolutePath) && !$this->isIgnoredDirectory($absolutePath, $this->ignoreDirectories, $this->projectDir)) {
+            $relativePath = $this->makeRelativePath($absolutePath, $this->projectDir);
+            if (isset($this->fileIndex[$relativePath])) {
+                return $relativePath;
+            }
+        }
+
+        // Проверяем файл по базовому имени
+        $basename = basename($importPath);
+        if (isset($this->fileIndex[$basename])) {
+            $fullPath = $this->projectDir . '/' . $this->fileIndex[$basename];
+            if (!$this->isIgnoredDirectory($fullPath, $this->ignoreDirectories, $this->projectDir)) {
+                return $this->fileIndex[$basename];
+            }
+        }
+
+        // Проверяем с добавлением расширений
+        foreach (self::DEPENDENCY_EXTENSIONS as $ext) {
+            $filenameWithExt = $basename . '.' . $ext;
+            if (isset($this->fileIndex[$filenameWithExt])) {
+                $fullPath = $this->projectDir . '/' . $this->fileIndex[$filenameWithExt];
+                if (!$this->isIgnoredDirectory($fullPath, $this->ignoreDirectories, $this->projectDir)) {
+                    return $this->fileIndex[$filenameWithExt];
+                }
+            }
+        }
+
+        return null;  // Путь не найден
     }
 
     /**
@@ -512,13 +527,11 @@ class MergeFiles
      */
     private function isIgnoredDirectory(string $filePath, array $ignoreDirectories, string $basePath): bool
     {
-        // Преобразуем полный путь файла в относительный.
-        $relativeFilePath = trim(str_replace($basePath, '', $filePath), '/');
+        $relativeFilePath = $this->makeRelativePath($filePath, $basePath);
 
-        // Проверяем, начинается ли путь с любой из игнорируемых директорий.
         foreach ($ignoreDirectories as $ignoredDir) {
             $ignoredDir = trim($ignoredDir, '/');
-            if (str_starts_with($relativeFilePath, $ignoredDir)) {
+            if (str_starts_with($relativeFilePath, $ignoredDir) || $relativeFilePath === $ignoredDir) {
                 return true;
             }
         }
