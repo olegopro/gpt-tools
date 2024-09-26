@@ -127,19 +127,24 @@ class MergeFiles
     {
         $allFiles = [];  // Массив для хранения всех найденных файлов.
 
-        // Обрабатываем каждый путь из списка путей для сканирования.
-        foreach ($this->paths as $path) {
-            $fullPath = $this->projectDir . '/' . ltrim($path, '/');  // Формируем полный путь.
+        // Если paths пустой, сканируем весь projectDir
+        if (empty($this->paths)) {
+            $this->processDirectory('', $allFiles);
+        } else {
+            // Обрабатываем каждый путь из списка путей для сканирования.
+            foreach ($this->paths as $path) {
+                $fullPath = $this->projectDir . '/' . ltrim($path, '/');  // Формируем полный путь.
 
-            if (is_file($fullPath)) {
-                // Если это файл, обрабатываем его.
-                $this->processFile($fullPath, $allFiles);
-            } elseif (is_dir($fullPath)) {
-                // Если это директория, сканируем её.
-                $this->processDirectory($path, $allFiles);
-            } else {
-                // Если путь не существует, выводим предупреждение.
-                echo "Предупреждение: Путь не существует или не соответствует условиям: $fullPath" . PHP_EOL;
+                if (is_file($fullPath)) {
+                    // Если это файл, обрабатываем его.
+                    $this->processFile($fullPath, $allFiles);
+                } elseif (is_dir($fullPath)) {
+                    // Если это директория, сканируем её.
+                    $this->processDirectory($path, $allFiles);
+                } else {
+                    // Если путь не существует, выводим предупреждение.
+                    echo "Предупреждение: Путь не существует или не соответствует условиям: $fullPath" . PHP_EOL;
+                }
             }
         }
 
@@ -180,20 +185,22 @@ class MergeFiles
      */
     private function processDirectory(string $path, array &$allFiles): void
     {
-        $pathWithSlash = rtrim($path, '/') . '/';  // Убедимся, что путь оканчивается на слеш
+        $pathWithSlash = $path === '' ? '' : rtrim($path, '/') . '/';  // Убедимся, что путь оканчивается на слеш или пуст
 
         foreach ($this->fileIndex as $relativePath) {
-            // Проверяем, что файл находится точно в директории или её поддиректории
-            if (str_starts_with($relativePath, $pathWithSlash) &&
-                !$this->isIgnoredFile($this->projectDir . '/' . $relativePath) &&
-                !$this->isIgnoredDirectory($this->projectDir . '/' . $relativePath, $this->ignoreDirectories, $this->projectDir) &&
-                $this->shouldIncludeFile(basename($relativePath), $this->extensions)) {
+            // Проверяем, что файл находится точно в директории или её поддиректории,
+            // или обрабатываем все файлы, если путь пустой
+            if ($path === '' || str_starts_with($relativePath, $pathWithSlash)) {
+                if (!$this->isIgnoredFile($this->projectDir . '/' . $relativePath) &&
+                    !$this->isIgnoredDirectory($this->projectDir . '/' . $relativePath, $this->ignoreDirectories, $this->projectDir) &&
+                    $this->shouldIncludeFile(basename($relativePath), $this->extensions)) {
 
-                $allFiles[] = $relativePath;
+                    $allFiles[] = $relativePath;
 
-                // Если включено сканирование зависимостей, продолжаем сканирование
-                if ($this->scanDependencies) {
-                    $allFiles = array_merge($allFiles, $this->scanDependencies($relativePath));
+                    // Если включено сканирование зависимостей, продолжаем сканирование
+                    if ($this->scanDependencies) {
+                        $allFiles = array_merge($allFiles, $this->scanDependencies($relativePath));
+                    }
                 }
             }
         }
@@ -257,6 +264,7 @@ class MergeFiles
                 }
             }
         }
+
         return array_unique($dependencies);
     }
 
