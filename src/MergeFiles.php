@@ -97,21 +97,40 @@ class MergeFiles
     }
 
     /**
-     * Строит индекс всех файлов проекта, соответствующих указанным расширениям.
-     * Индекс необходим для ускоренного поиска файлов по их имени при сканировании зависимостей.
+     * Строит индекс всех файлов проекта для быстрого поиска.
+     * Использует системную команду find вместо PHP-итератора для повышения производительности.
+     * Создает два типа индексов:
+     * 1. По базовому имени файла -> относительный путь
+     * 2. По относительному пути -> относительный путь
+     * 
+     * Примечание по производительности:
+     * - Команда find работает быстрее чем RecursiveIteratorIterator
+     * - Использование substr вместо str_replace ускоряет обработку путей
+     * - Прямая проверка с continue оптимальнее вложенных условий
      */
     private function buildFileIndex(): void
     {
-        $iterator = new RecursiveIteratorIterator(
-            new RecursiveDirectoryIterator($this->projectDir, FilesystemIterator::SKIP_DOTS),
-            RecursiveIteratorIterator::SELF_FIRST
-        );
+        // Используем системную команду find для получения списка всех файлов
+        // Это значительно быстрее чем PHP-итератор для больших директорий
+        $command = "find {$this->projectDir} -type f";
+        $files = explode("\n", shell_exec($command));
 
-        foreach ($iterator as $file) {
-            if ($file->isFile() && $this->shouldIncludeFile($file->getFilename(), $this->extensions)) {
-                $relativePath = $this->makeRelativePath($file->getPathname(), $this->projectDir);
-                if (!$this->isIgnoredDirectory($file->getPathname(), $this->ignoreDirectories, $this->projectDir)) {
-                    $this->fileIndex[$file->getBasename()] = $relativePath;
+        foreach ($files as $file) {
+            // Пропускаем пустые строки от команды find
+            if (empty($file)) continue;
+
+            // Получаем только имя файла из полного пути
+            $filename = basename($file);
+
+            // Проверяем соответствие расширения файла
+            if ($this->shouldIncludeFile($filename, $this->extensions)) {
+                // Получаем относительный путь, используя быстрый substr
+                $relativePath = substr($file, strlen($this->projectDir) + 1);
+
+                // Проверяем, не находится ли файл в игнорируемой директории
+                if (!$this->isIgnoredDirectory($file, $this->ignoreDirectories, $this->projectDir)) {
+                    // Создаем два индекса для быстрого поиска
+                    $this->fileIndex[$filename] = $relativePath;
                     $this->fileIndex[$relativePath] = $relativePath;
                 }
             }
@@ -164,9 +183,11 @@ class MergeFiles
         $relativePath = $this->makeRelativePath($fullPath, $this->projectDir);
 
         // Проверяем, должен ли файл быть включен, и не находится ли он в списке игнорируемых.
-        if ($this->shouldIncludeFile(basename($fullPath), $this->extensions) &&
+        if (
+            $this->shouldIncludeFile(basename($fullPath), $this->extensions) &&
             !$this->isIgnoredFile($fullPath) &&
-            !$this->isIgnoredDirectory($fullPath, $this->ignoreDirectories, $this->projectDir)) {
+            !$this->isIgnoredDirectory($fullPath, $this->ignoreDirectories, $this->projectDir)
+        ) {
             // Добавляем файл в список.
             $allFiles[] = $relativePath;
 
@@ -191,9 +212,11 @@ class MergeFiles
             // Проверяем, что файл находится точно в директории или её поддиректории,
             // или обрабатываем все файлы, если путь пустой
             if ($path === '' || str_starts_with($relativePath, $pathWithSlash)) {
-                if (!$this->isIgnoredFile($this->projectDir . '/' . $relativePath) &&
+                if (
+                    !$this->isIgnoredFile($this->projectDir . '/' . $relativePath) &&
                     !$this->isIgnoredDirectory($this->projectDir . '/' . $relativePath, $this->ignoreDirectories, $this->projectDir) &&
-                    $this->shouldIncludeFile(basename($relativePath), $this->extensions)) {
+                    $this->shouldIncludeFile(basename($relativePath), $this->extensions)
+                ) {
 
                     $allFiles[] = $relativePath;
 
@@ -207,65 +230,116 @@ class MergeFiles
     }
 
     /**
-     * Рекурсивно сканирует зависимости файла (например, import'ы) и добавляет их в список для объединения.
+     * Рекурсивно сканирует зависимости файла и возвращает список всех найденных зависимостей.
+     * Реализует оптимизированный алгоритм с множественными проверками для раннего выхода
+     * и предотвращения лишней работы.
      *
-     * @param string $file Относительный путь к файлу.
-     * @param int $depth Текущая глубина рекурсии (используется для ограничения по maxDepth).
-     * @return array Список зависимостей, которые нужно включить в объединение.
+     * @param string $file Относительный путь к файлу для сканирования
+     * @param int $depth Текущая глубина рекурсии для контроля вложенности
+     * @return array Массив уникальных путей к файлам зависимостей
+     *
+     * Оптимизации производительности:
+     * - Кэширование результатов
+     * - Быстрые проверки перед тяжелыми операциями
+     * - Использование ассоциативного массива для scannedFiles
+     * - Предварительная проверка наличия импортов
      */
     private function scanDependencies(string $file, int $depth = 0): array
     {
-        if ($depth > $this->maxDepth || isset($this->dependencyCache[$file])) {
-            return $this->dependencyCache[$file] ?? [];
+        // Быстрая проверка глубины рекурсии
+        if ($depth > $this->maxDepth) {
+            return [];
         }
 
+        // Проверка кэша зависимостей
+        if (isset($this->dependencyCache[$file])) {
+            return $this->dependencyCache[$file];
+        }
+
+        // Формируем полный путь и проверяем расширение
         $fullPath = $this->projectDir . '/' . $file;
-        if (!file_exists($fullPath) || is_dir($fullPath) ||
-            !$this->shouldIncludeFile($fullPath, self::DEPENDENCY_EXTENSIONS) ||
-            $this->isIgnoredDirectory($fullPath, $this->ignoreDirectories, $this->projectDir)) {
+        $ext = pathinfo($fullPath, PATHINFO_EXTENSION);
+
+        // Быстрая проверка поддерживаемых расширений
+        if (!in_array($ext, self::DEPENDENCY_EXTENSIONS, true)) {
             return [];
         }
 
-        if (in_array($file, $this->scannedFiles)) {
+        // Проверка на циклические зависимости
+        if (isset($this->scannedFiles[$file])) {
             return [];
         }
 
-        $this->scannedFiles[] = $file;
+        // Отмечаем файл как сканируемый
+        $this->scannedFiles[$file] = true;
 
+        // Получаем содержимое файла
         $content = $this->getFileContent($fullPath);
+
+        // Быстрая предварительная проверка наличия импортов
+        if (strpos($content, 'import') === false) {
+            unset($this->scannedFiles[$file]);
+            return [];
+        }
+
+        // Извлекаем и обрабатываем зависимости
         $dependencies = $this->extractDependencies($content, $file, $depth);
 
+        // Сохраняем результат в кэш и очищаем маркер сканирования
         $this->dependencyCache[$file] = $dependencies;
-        array_pop($this->scannedFiles);
+        unset($this->scannedFiles[$file]);
 
         return $dependencies;
     }
 
     /**
-     * Извлекает зависимости (import'ы) из содержимого файла.
+     * Извлекает все зависимости из содержимого файла.
+     * Использует построчный анализ и упрощенное регулярное выражение
+     * для повышения производительности.
      *
-     * @param string $content Содержимое файла.
-     * @param string $currentFile Текущий файл, для которого извлекаются зависимости.
-     * @param int $depth Текущая глубина рекурсии.
-     * @return array Список зависимостей, найденных в файле.
+     * @param string $content Содержимое файла для анализа
+     * @param string $currentFile Текущий обрабатываемый файл
+     * @param int $depth Текущая глубина рекурсии
+     * @return array Массив уникальных путей к файлам зависимостей
+     *
+     * Оптимизации производительности:
+     * - Построчный анализ вместо анализа всего файла
+     * - Предварительная проверка строки на наличие import
+     * - Использование ассоциативного массива для уникальности
+     * - Упрощенное регулярное выражение
      */
     private function extractDependencies(string $content, string $currentFile, int $depth): array
     {
+        // Используем ассоциативный массив для автоматической дедупликации
         $dependencies = [];
-        $importRegex = '/import\s+(?:(?:\w+\s*,\s*)?(?:{[^}]+})?|\w+|\*\s+as\s+\w+)\s+from\s+[\'"]([^\'"]+)[\'"]/';
-        if (preg_match_all($importRegex, $content, $matches)) {
-            foreach ($matches[1] as $match) {
-                $dependencyPath = $this->resolveDependencyPath($match, $currentFile);
-                if ($dependencyPath && !in_array($dependencyPath, $dependencies)) {
-                    $dependencies[] = $dependencyPath;
+
+        // Разбиваем содержимое на строки для построчного анализа
+        $lines = explode("\n", $content);
+
+        foreach ($lines as $line) {
+            // Быстрая проверка наличия import в строке
+            if (strpos($line, 'import') === false) continue;
+
+            // Используем упрощенное регулярное выражение для извлечения пути
+            if (preg_match('/[\'"]([^\'"]+)[\'"]/', $line, $match)) {
+                $dependencyPath = $this->resolveDependencyPath($match[1], $currentFile);
+
+                // Проверяем валидность пути и отсутствие дубликата
+                if ($dependencyPath && !isset($dependencies[$dependencyPath])) {
+                    $dependencies[$dependencyPath] = true;
+
+                    // Рекурсивно обрабатываем зависимости если не достигнут максимум
                     if ($depth < $this->maxDepth) {
-                        $dependencies = array_merge($dependencies, $this->scanDependencies($dependencyPath, $depth + 1));
+                        foreach ($this->scanDependencies($dependencyPath, $depth + 1) as $dep) {
+                            $dependencies[$dep] = true;
+                        }
                     }
                 }
             }
         }
 
-        return array_unique($dependencies);
+        // Возвращаем только ключи, так как значения были использованы только для дедупликации
+        return array_keys($dependencies);
     }
 
     /**
@@ -323,94 +397,130 @@ class MergeFiles
     }
 
     /**
-     * Объединяет содержимое всех переданных путей в один строковый блок.
+     * Объединяет содержимое всех файлов в один выходной файл.
+     * Использует оптимизированный подход с массивом чанков вместо прямой конкатенации строк.
+     * Кэширует часто используемые значения для повышения производительности.
      *
-     * @param array $paths Массив относительных путей к файлам.
-     * @return string Объединённое содержимое всех файлов.
+     * @param array $paths Массив относительных путей к файлам для объединения
+     * @return string Объединенное содержимое всех файлов с разделителями
+     *
+     * Особенности реализации:
+     * - Использование static кэширования для rootFolderName
+     * - Массив чанков для эффективного объединения строк
+     * - Оптимизированные проверки существования файлов
+     * - Улучшенное форматирование выходного контента
      */
     private function mergePaths(array $paths): string
     {
-        $mergedContent = '';  // Переменная для хранения содержимого всех файлов.
+        // Кэшируем имя корневой директории между вызовами
+        // Используем оператор null coalescing для инициализации
+        static $rootFolderName;
+        $rootFolderName ??= basename($this->projectDir);
 
-        // Обрабатываем каждый путь в списке.
+        // Инициализируем массив для хранения частей контента
+        // Это эффективнее чем прямая конкатенация строк
+        $chunks = [];
+
         foreach ($paths as $relativePath) {
-            $absoluteFilePath = $this->projectDir . '/' . $relativePath;  // Преобразуем в абсолютный путь.
-            if (!file_exists($absoluteFilePath)) {
-                echo "Предупреждение: Файл не существует: $absoluteFilePath" . PHP_EOL;  // Предупреждение, если файл не найден.
+            // Формируем полный путь к файлу
+            $absoluteFilePath = $this->projectDir . '/' . $relativePath;
+
+            // Проверяем существование файла через is_file
+            // Это быстрее чем file_exists, так как проверяет только файлы
+            if (!is_file($absoluteFilePath)) {
+                echo "Предупреждение: Файл не существует: $absoluteFilePath" . PHP_EOL;
                 continue;
             }
 
-            // Читаем содержимое файла и применяем к нему фильтры.
-            $content = $this->getFileContent($absoluteFilePath);
-            $content = $this->applyFilters($content);
-
-            // Добавляем заголовок для файла в итоговый контент.
-            $rootFolderName = basename($this->projectDir);
-            $fullRelativePath = '/' . $rootFolderName . '/' . $relativePath;
-
-            // Включаем комментарии, указывающие на начало и конец каждого файла.
-            $mergedContent .= "// Начало файла -> $fullRelativePath" . PHP_EOL;
-            $mergedContent .= $content . PHP_EOL;
-            $mergedContent .= "// Конец файла -> $fullRelativePath" . str_repeat(PHP_EOL, 2);
+            // Добавляем разделители и содержимое в массив чанков
+            // Это позволяет избежать многократной конкатенации строк
+            $chunks[] = "// Начало файла -> /$rootFolderName/$relativePath";
+            $chunks[] = $this->applyFilters($this->getFileContent($absoluteFilePath));
+            $chunks[] = "// Конец файла -> /$rootFolderName/$relativePath\n";
         }
 
-        return rtrim($mergedContent, PHP_EOL);  // Возвращаем итоговое содержимое.
+        // Объединяем все чанки одной операцией
+        // implode эффективнее чем последовательная конкатенация
+        return implode(PHP_EOL, $chunks);
     }
 
     /**
-     * Получает содержимое файла с использованием кеша для повышения производительности.
+     * Получает содержимое файла с оптимизированным кэшированием.
+     * Учитывает наличие OPcache для выбора оптимального метода чтения.
+     * Реализует ленивую загрузку содержимого файлов.
      *
-     * @param string $filePath Полный путь к файлу.
-     * @return string Содержимое файла.
+     * @param string $filePath Полный путь к файлу
+     * @return string Содержимое файла
+     *
+     * Особенности реализации:
+     * - Проверка доступности OPcache
+     * - Использование stream_get_contents как альтернативы
+     * - Кэширование результатов проверки OPcache
+     * - Оптимизированное хранение содержимого файлов
      */
     private function getFileContent(string $filePath): string
     {
-        // Если файл уже закеширован, возвращаем содержимое из кеша.
-        if (!isset($this->contentCache[$filePath])) {
-            $this->contentCache[$filePath] = file_get_contents($filePath);  // Читаем содержимое файла и сохраняем в кеш.
-        }
+        // Кэшируем результат проверки OPcache между вызовами
+        static $opcache;
+        $opcache ??= function_exists('opcache_get_status') && opcache_get_status(false);
 
-        return $this->contentCache[$filePath];  // Возвращаем содержимое.
+        // Используем nullsafe оператор для комбинации проверки и присваивания
+        // Выбираем оптимальный метод чтения в зависимости от наличия OPcache
+        return $this->contentCache[$filePath] ??= ($opcache ?
+            file_get_contents($filePath) :
+            stream_get_contents(fopen($filePath, 'r'))
+        );
     }
 
     /**
-     * Применяет фильтры к содержимому файла (удаление стилей, комментариев, пустых строк).
+     * Применяет настроенные фильтры к содержимому файла.
+     * Использует кэширование регулярных выражений для оптимизации производительности.
+     * Поддерживает различные типы фильтрации: стили, комментарии, пустые строки.
      *
-     * @param string $content Содержимое файла.
-     * @return string Отфильтрованное содержимое файла.
+     * @param string $content Исходное содержимое файла
+     * @return string Отфильтрованное содержимое
+     *
+     * Особенности реализации:
+     * - Статическое кэширование паттернов
+     * - Ленивая инициализация фильтров
+     * - Оптимизированные регулярные выражения
+     * - Условное применение фильтров
      */
     private function applyFilters(string $content): string
     {
-        $patterns = [];  // Массив регулярных выражений для фильтрации.
-        $replacements = [];  // Массив замен для каждого паттерна.
+        // Кэшируем массивы паттернов и замен между вызовами
+        static $patterns = null;
+        static $replacements = null;
 
-        // Удаление тегов <style>, если это указано в настройках.
-        if ($this->removeStyleTag) {
-            $patterns[] = '/<style.*?>.*?<\/style>/s';
-            $replacements[] = '';
-        }
-        // Удаление HTML-комментариев.
-        if ($this->removeHtmlComments) {
-            $patterns[] = '/<!--.*?-->/s';
-            $replacements[] = '';
-        }
-        // Удаление однострочных комментариев.
-        if ($this->removeSingleLineComments) {
-            $patterns[] = '!^\s*//.*?(\r?\n|\r)!m';
-            $replacements[] = '';
-        }
-        // Удаление многострочных комментариев.
-        if ($this->removeMultiLineComments) {
-            $patterns[] = '!/\*[\s\S]*?\*/\s*!';
-            $replacements[] = '';
-        }
-        // Удаление пустых строк.
-        if ($this->removeEmptyLines) {
-            $patterns[] = "/(^[\r\n]*|[\r\n]+)[\s\t]*[\r\n]+/";
-            $replacements[] = PHP_EOL;
+        // Ленивая инициализация фильтров при первом вызове
+        if ($patterns === null) {
+            $patterns = [];
+            $replacements = [];
+
+            // Добавляем фильтры только если они включены в настройках
+            if ($this->removeStyleTag) {
+                $patterns[] = '/<style.*?>.*?<\/style>/s';
+                $replacements[] = '';
+            }
+            if ($this->removeHtmlComments) {
+                $patterns[] = '/<!--.*?-->/s';
+                $replacements[] = '';
+            }
+            if ($this->removeSingleLineComments) {
+                $patterns[] = '!^\s*//.*?(\r?\n|\r)!m';
+                $replacements[] = '';
+            }
+            if ($this->removeMultiLineComments) {
+                $patterns[] = '!/\*[\s\S]*?\*/\s*!';
+                $replacements[] = '';
+            }
+            if ($this->removeEmptyLines) {
+                $patterns[] = "/(^[\r\n]*|[\r\n]+)[\s\t]*[\r\n]+/";
+                $replacements[] = PHP_EOL;
+            }
         }
 
-        // Если есть фильтры, применяем их.
+        // Применяем фильтры только если они определены
         return $patterns ? rtrim(preg_replace($patterns, $replacements, $content)) : $content;
     }
 
@@ -512,39 +622,69 @@ class MergeFiles
     }
 
     /**
-     * Преобразует абсолютный путь в относительный.
+     * Преобразует абсолютный путь файла в относительный путь.
+     * Реализует максимально эффективный способ получения относительного пути
+     * без использования дополнительных функций и промежуточных преобразований.
      *
-     * @param string $filePath Полный путь к файлу.
-     * @param string $basePath Базовая директория, относительно которой строится путь.
-     * @return string Относительный путь.
+     * @param string $filePath Абсолютный путь к файлу
+     * @param string $basePath Базовый путь, относительно которого нужно получить путь
+     * @return string Относительный путь к файлу
+     *
+     * Особенности реализации:
+     * - Использует substr вместо str_replace для повышения производительности
+     * - Избегает дополнительных проверок и преобразований
+     * - Предполагает корректность входных данных для максимальной скорости
      */
     private function makeRelativePath(string $filePath, string $basePath): string
     {
-        $relativePath = str_replace($basePath, '', $filePath);  // Убираем базовую директорию из пути.
-
-        return ltrim($relativePath, '/');  // Убираем начальный слеш, если он присутствует.
+        // Используем substr для прямого извлечения относительного пути
+        // Добавляем 1 к длине для пропуска разделяющего слеша
+        return substr($filePath, strlen($basePath) + 1);
     }
 
     /**
-     * Проверяет, находится ли файл в игнорируемой директории.
+     * Проверяет, находится ли указанный файл в игнорируемой директории.
+     * Метод использует эффективное кэширование результатов и оптимизированную 
+     * обработку путей для повышения производительности при повторных проверках 
+     * одних и тех же директорий.
      *
-     * @param string $filePath Полный путь к файлу.
-     * @param array $ignoreDirectories Массив игнорируемых директорий.
-     * @param string $basePath Базовая директория проекта.
-     * @return bool Возвращает true, если файл находится в игнорируемой директории.
+     * @param string $filePath Полный путь к проверяемому файлу
+     * @param array $ignoreDirectories Массив путей к игнорируемым директориям
+     * @param string $basePath Базовый путь проекта для создания относительных путей
+     * @return bool Возвращает true, если файл находится в игнорируемой директории
+     *
+     * Особенности реализации:
+     * - Использует статическое кэширование для хранения результатов проверок
+     * - Оптимизирует работу с путями через substr вместо makeRelativePath
+     * - Применяет раннее возвращение результата при наличии кэша
      */
     private function isIgnoredDirectory(string $filePath, array $ignoreDirectories, string $basePath): bool
     {
-        $relativeFilePath = $this->makeRelativePath($filePath, $basePath);
+        // Создаем статический кэш для хранения результатов между вызовами метода.
+        // Это особенно эффективно при повторных проверках одних и тех же путей.
+        static $cache = [];
 
+        // Проверяем наличие результата в кэше перед выполнением проверок
+        if (isset($cache[$filePath])) {
+            return $cache[$filePath];
+        }
+
+        // Получаем относительный путь напрямую через substr вместо вызова makeRelativePath
+        // Это быстрее, так как избегает создания промежуточных строк
+        $relativeFilePath = substr($filePath, strlen($basePath) + 1);
+
+        // Проверяем каждую игнорируемую директорию
         foreach ($ignoreDirectories as $ignoredDir) {
-            $ignoredDir = trim($ignoredDir, '/');
-            if (str_starts_with($relativeFilePath, $ignoredDir) || $relativeFilePath === $ignoredDir) {
-                return true;
+            // Используем str_starts_with для эффективной проверки начала строки
+            // trim удаляет слеши для унификации формата путей
+            if (str_starts_with($relativeFilePath, trim($ignoredDir, '/'))) {
+                // Сохраняем положительный результат в кэш и возвращаем его
+                return $cache[$filePath] = true;
             }
         }
 
-        return false;
+        // Сохраняем отрицательный результат в кэш и возвращаем его
+        return $cache[$filePath] = false;
     }
 
     /**
@@ -559,14 +699,43 @@ class MergeFiles
     }
 
     /**
-     * Проверяет, должен ли файл быть включён в процесс объединения на основе его расширения.
+     * Определяет, должен ли файл быть включен в обработку на основе его расширения.
+     * Метод реализует эффективное кэширование результатов и оптимизированную проверку
+     * расширений файлов для ускорения повторных проверок.
      *
-     * @param string $filename Имя файла.
-     * @param array $extensions Массив разрешённых расширений файлов.
-     * @return bool Возвращает true, если файл соответствует нужным расширениям.
+     * @param string $filename Имя проверяемого файла
+     * @param array $extensions Массив разрешенных расширений файлов
+     * @return bool Возвращает true, если файл должен быть обработан
+     *
+     * Особенности реализации:
+     * - Использует статическое кэширование результатов проверок
+     * - Оптимизирует извлечение расширения через strrchr вместо pathinfo
+     * - Применяет строгое сравнение для повышения надежности
+     * - Реализует быструю проверку для wildcards
      */
     private function shouldIncludeFile(string $filename, array $extensions): bool
     {
-        return in_array('*', $extensions) || in_array(pathinfo($filename, PATHINFO_EXTENSION), $extensions);
+        // Создаем статический кэш для хранения результатов проверок.
+        // Это значительно ускоряет работу при повторных проверках одних и тех же файлов.
+        static $cache = [];
+
+        // Проверяем наличие результата в кэше
+        if (isset($cache[$filename])) {
+            return $cache[$filename];
+        }
+
+        // Быстрая проверка на wildcard в списке расширений
+        // Это позволяет быстро вернуть результат для случая, когда принимаются все файлы
+        if (in_array('*', $extensions, true)) {
+            return $cache[$filename] = true;
+        }
+
+        // Извлекаем расширение файла используя strrchr
+        // Это быстрее чем pathinfo, так как выполняет только одну операцию
+        $ext = substr(strrchr($filename, '.'), 1);
+
+        // Сохраняем результат в кэш и возвращаем его
+        // Проверяем наличие расширения и его присутствие в списке разрешенных
+        return $cache[$filename] = $ext && in_array($ext, $extensions, true);
     }
 }
