@@ -7,6 +7,11 @@
  */
 class MergeFiles
 {
+    // Определяем константы для методов индексации
+    private const FILE_INDEXING_PHP = 'php';
+    private const FILE_INDEXING_SYSTEM = 'system';
+    private const AVAILABLE_INDEXING_METHODS = [self::FILE_INDEXING_PHP, self::FILE_INDEXING_SYSTEM];
+
     private string $projectDir;
     private array $paths;
     private bool $scanDependencies;
@@ -22,6 +27,7 @@ class MergeFiles
     private string $outputFile;
     private int $maxDepth;
     private string $fileListOutputFile;
+    private string $fileIndexingMethod;
 
     // Внутренние кеши для оптимизации
     private array $fileIndex = [];  // Индекс файлов в проекте для быстрого поиска по имени.
@@ -52,7 +58,7 @@ class MergeFiles
      *  - ignoreDirectories (array): Массив директорий для игнорирования.
      *  - outputFile (string): Имя файла, в который будет записан результат объединения.
      *  - maxDepth (int, опционально): Максимальная глубина рекурсивного сканирования зависимостей.
-     *  - fileListOutputFile (string): Имя файла, в который будет записан список объединённых файлов.
+     *  - fileIndexingMethod (string): Метод индексации файлов ('php' или 'system').
      */
     public function __construct(array $config)
     {
@@ -72,6 +78,7 @@ class MergeFiles
         $this->outputFile = $config['outputFile'];
         $this->maxDepth = $config['maxDepth'] ?? 1000;
         $this->fileListOutputFile = $config['fileListOutputFile'] ?? 'file_list.txt';
+        $this->fileIndexingMethod = $this->validateAndGetIndexingMethod($config['fileIndexingMethod'] ?? self::FILE_INDEXING_PHP);
     }
 
     /**
@@ -97,36 +104,83 @@ class MergeFiles
     }
 
     /**
-     * Строит индекс всех файлов проекта для быстрого поиска.
-     * Использует системную команду find вместо PHP-итератора для повышения производительности.
-     * Создает два типа индексов:
-     * 1. По базовому имени файла -> относительный путь
-     * 2. По относительному пути -> относительный путь
-     * 
-     * Примечание по производительности:
-     * - Команда find работает быстрее чем RecursiveIteratorIterator
-     * - Использование substr вместо str_replace ускоряет обработку путей
-     * - Прямая проверка с continue оптимальнее вложенных условий
+     * Основной метод построения индекса файлов, который выбирает
+     * нужную реализацию в зависимости от конфигурации.
      */
     private function buildFileIndex(): void
     {
-        // Используем системную команду find для получения списка всех файлов
-        // Это значительно быстрее чем PHP-итератор для больших директорий
+        if ($this->fileIndexingMethod === self::FILE_INDEXING_SYSTEM) {
+            $this->buildFileIndexUsingSystemFind();
+        } else {
+            $this->buildFileIndexUsingPhp();
+        }
+    }
+
+    /**
+     * Построение индекса файлов с использованием PHP-итератора.
+     * Этот метод является кросс-платформенным решением и работает на всех системах.
+     * Использует встроенные возможности PHP для рекурсивного обхода директорий.
+     * 
+     * Особенности реализации:
+     * - Использует RecursiveIteratorIterator для обхода директорий
+     * - Проверяет каждый файл на соответствие условиям
+     * - Создает двойную индексацию для быстрого поиска
+     * - Поддерживает игнорирование директорий
+     */
+    private function buildFileIndexUsingPhp(): void
+    {
+        // Создаем итератор для рекурсивного обхода директорий
+        $iterator = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($this->projectDir, FilesystemIterator::SKIP_DOTS),
+            RecursiveIteratorIterator::SELF_FIRST
+        );
+
+        // Обходим все файлы в директории
+        foreach ($iterator as $file) {
+            // Проверяем, является ли элемент файлом и соответствует ли расширение
+            if ($file->isFile() && $this->shouldIncludeFile($file->getFilename(), $this->extensions)) {
+                // Получаем относительный путь к файлу
+                $relativePath = $this->makeRelativePath($file->getPathname(), $this->projectDir);
+                // Проверяем, не находится ли файл в игнорируемой директории
+                if (!$this->isIgnoredDirectory($file->getPathname(), $this->ignoreDirectories, $this->projectDir)) {
+                    // Создаем два индекса для быстрого поиска
+                    $this->fileIndex[$file->getBasename()] = $relativePath;
+                    $this->fileIndex[$relativePath] = $relativePath;
+                }
+            }
+        }
+    }
+
+    /**
+     * Построение индекса файлов с использованием системной команды find.
+     * Этот метод оптимизирован для Unix-подобных систем и обеспечивает 
+     * более высокую производительность на больших директориях.
+     * 
+     * Особенности реализации:
+     * - Использует системную команду find для быстрого поиска
+     * - Работает только на Unix-подобных системах
+     * - Обеспечивает лучшую производительность на больших проектах
+     * - Создает тот же формат индекса, что и PHP-метод
+     */
+    private function buildFileIndexUsingSystemFind(): void
+    {
+        // Формируем и выполняем системную команду find
         $command = "find {$this->projectDir} -type f";
         $files = explode("\n", shell_exec($command));
 
+        // Обрабатываем каждый найденный файл
         foreach ($files as $file) {
             // Пропускаем пустые строки от команды find
-            if (empty($file)) continue;
+            if (empty($file)) {
+                continue;
+            }
 
-            // Получаем только имя файла из полного пути
+            // Получаем базовое имя файла
             $filename = basename($file);
-
             // Проверяем соответствие расширения файла
             if ($this->shouldIncludeFile($filename, $this->extensions)) {
                 // Получаем относительный путь, используя быстрый substr
                 $relativePath = substr($file, strlen($this->projectDir) + 1);
-
                 // Проверяем, не находится ли файл в игнорируемой директории
                 if (!$this->isIgnoredDirectory($file, $this->ignoreDirectories, $this->projectDir)) {
                     // Создаем два индекса для быстрого поиска
@@ -206,7 +260,7 @@ class MergeFiles
      */
     private function processDirectory(string $path, array &$allFiles): void
     {
-        $pathWithSlash = $path === '' ? '' : rtrim($path, '/') . '/';  // Убедимся, что путь оканчивается на слеш или пуст
+        $pathWithSlash = $path === '' ? '' : rtrim($path, '/') . '/';  // Убедимся, что путь оканчивается на слэш или пуст
 
         foreach ($this->fileIndex as $relativePath) {
             // Проверяем, что файл находится точно в директории или её поддиректории,
@@ -737,5 +791,29 @@ class MergeFiles
         // Сохраняем результат в кэш и возвращаем его
         // Проверяем наличие расширения и его присутствие в списке разрешенных
         return $cache[$filename] = $ext && in_array($ext, $extensions, true);
+    }
+
+    /**
+     * Проверяет и возвращает валидный метод индексации файлов.
+     * Если указан неверный метод, возвращает метод по умолчанию (PHP).
+     *
+     * @param string $method Метод индексации из конфигурации
+     * @return string Валидный метод индексации
+     */
+    private function validateAndGetIndexingMethod(string $method): string
+    {
+        $method = strtolower($method);
+        if (!in_array($method, self::AVAILABLE_INDEXING_METHODS, true)) {
+            trigger_error(
+                sprintf(
+                    'Неверный метод индексации файлов "%s". Используется метод по умолчанию "%s"',
+                    $method,
+                    self::FILE_INDEXING_PHP
+                ),
+                E_USER_NOTICE
+            );
+            return self::FILE_INDEXING_PHP;
+        }
+        return $method;
     }
 }

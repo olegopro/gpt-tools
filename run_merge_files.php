@@ -16,12 +16,13 @@ $config = [
     'removeHtmlComments'       => false,
     'removeSingleLineComments' => false,
     'removeMultiLineComments'  => false,
-    'removeEmptyLines'         => true,
+    'removeEmptyLines'         => false,
     'includeInstructions'      => false,
     'ignoreFiles'              => [],
     'ignoreDirectories'        => ['node_modules', '.git', '.idea'],
     'outputFile'               => 'merged_files.txt',
     'fileListOutputFile'       => 'file_list.txt',
+    'fileIndexingMethod'       => 'php'
 ];
 
 (new MergeFiles($config))->merge();
