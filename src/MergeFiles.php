@@ -127,23 +127,24 @@ class MergeFiles
      * - Создает двойную индексацию для быстрого поиска
      * - Поддерживает игнорирование директорий
      */
-    private function buildFileIndexUsingPhp(): void
+    public function buildFileIndexUsingPhp(): void
     {
-        // Создаем итератор для рекурсивного обхода директорий
-        $iterator = new RecursiveIteratorIterator(
-            new RecursiveDirectoryIterator($this->projectDir, FilesystemIterator::SKIP_DOTS),
-            RecursiveIteratorIterator::SELF_FIRST
-        );
+        $queue = new SplQueue();
+        $queue->enqueue($this->projectDir);
 
-        // Обходим все файлы в директории
-        foreach ($iterator as $file) {
-            // Проверяем, является ли элемент файлом и соответствует ли расширение
-            if ($file->isFile() && $this->shouldIncludeFile($file->getFilename(), $this->extensions)) {
-                // Получаем относительный путь к файлу
-                $relativePath = $this->makeRelativePath($file->getPathname(), $this->projectDir);
-                // Проверяем, не находится ли файл в игнорируемой директории
-                if (!$this->isIgnoredDirectory($file->getPathname(), $this->ignoreDirectories, $this->projectDir)) {
-                    // Создаем два индекса для быстрого поиска
+        while (!$queue->isEmpty()) {
+            $currentDir = $queue->dequeue();
+            $iterator = new DirectoryIterator($currentDir);
+
+            foreach ($iterator as $file) {
+                if ($file->isDot()) continue;
+
+                if ($file->isDir()) {
+                    if (!$this->isIgnoredDirectory($file->getPathname(), $this->ignoreDirectories, $this->projectDir)) {
+                        $queue->enqueue($file->getPathname());
+                    }
+                } elseif ($file->isFile() && $this->shouldIncludeFile($file->getFilename(), $this->extensions)) {
+                    $relativePath = $this->makeRelativePath($file->getPathname(), $this->projectDir);
                     $this->fileIndex[$file->getBasename()] = $relativePath;
                     $this->fileIndex[$relativePath] = $relativePath;
                 }
