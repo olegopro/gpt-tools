@@ -12,6 +12,76 @@ class MergeFiles
     private const FILE_INDEXING_SYSTEM = 'system';
     private const AVAILABLE_INDEXING_METHODS = [self::FILE_INDEXING_PHP, self::FILE_INDEXING_SYSTEM];
 
+    // Регулярные выражения для фильтрации различных типов контента в файлах
+    private const STYLE_TAG_PATTERN = '/<style.*?>.*?<\/style>/s';              // Удаляет теги style с их содержимым
+    private const HTML_COMMENTS_PATTERN = '/<!--.*?-->/s';                      // Удаляет HTML комментарии
+    private const SINGLE_LINE_COMMENTS_PATTERN = '!^\s*//.*?(\r?\n|\r)!m';      // Удаляет однострочные комментарии
+    private const MULTI_LINE_COMMENTS_PATTERN = '!/\*[\s\S]*?\*/\s*!';          // Удаляет многострочные комментарии 
+    private const EMPTY_LINES_PATTERN = "/(^[\r\n]*|[\r\n]+)[\s\t]*[\r\n]+/";   // Удаляет пустые строки
+
+    /**
+     * Все регулярные выражения для поиска различных типов импортов в JavaScript/TypeScript/Vue файлах.
+     * Оптимизированы для работы с ES6+, CommonJS, динамическими импортами и специфичными для Vue/TypeScript конструкциями.
+     */
+    private const PATTERNS = [
+        // ES6+ импорты с деструктуризацией и множественными экспортами
+        // import DefaultExport from './module'
+        // import { export1, export2 as alias2 } from './module' 
+        // import * as name from './module'
+        // import DefaultExport, { export1, export2 } from './module'
+        // import { Nullable }, asd from './types'
+        // import { Type }, DefaultExport, { Other } from './module'
+        'ES6_IMPORTS' => '/import\s+(?:(?:{[^}]+}|\*\s+as\s+[^,]+|[\w\d$_]+)\s*,?\s*)*from\s+[\'"]([^\'"]+)[\'"]/',
+
+        // Импорты для побочных эффектов
+        // import './styles.css'
+        // import '@/plugins/vuetify'
+        // import 'normalize.css'
+        // import type { Type } from './types'
+        'SIDE_EFFECT_IMPORTS' => '/import\s+(?:type\s+)?[\'"]([^\'"]+)[\'"]/',
+
+        // CommonJS require
+        // const module = require('./module')
+        // require('@/utils/helper')
+        // let { method } = require('some-module')
+        // const { default: alias } = require('./module')
+        'COMMONJS_REQUIRE' => '/require\s*\(\s*[\'"]([^\'"]+)[\'"]/',
+
+        // Динамические импорты
+        // import('./module').then(module => {})
+        // const module = await import('./module')
+        // require.ensure(['./module'], function() {})
+        // const module = await require('./module')
+        'DYNAMIC_IMPORTS' => '/(?:import|require)\s*\(\s*[\'"]([^\'"]+)[\'"]/',
+
+        // Vue специфичные импорты через defineAsyncComponent
+        // defineAsyncComponent(() => import('./AsyncComponent.vue'))
+        // defineAsyncComponent(() => import('@/components/MyComponent.vue'))
+        // defineAsyncComponent(async () => await import('./AsyncComponent.vue'))
+        'VUE_ASYNC_COMPONENT' => '/defineAsyncComponent\s*\(\s*(?:async\s*)?\(\s*\)\s*=>\s*(?:await\s*)?import\s*\(\s*[\'"]([^\'"]+)[\'"]/',
+
+        // Vue компонент с динамическим импортом
+        // component: () => import('./LazyComponent.vue')
+        // components: { AsyncComponent: () => import('./AsyncComponent.vue') }
+        // component: async () => await import('./LazyComponent.vue')
+        'VUE_LAZY_COMPONENT' => '/component:\s*(?:async\s*)?\(\s*\)\s*=>\s*(?:await\s*)?import\s*\(\s*[\'"]([^\'"]+)[\'"]/',
+
+        // TypeScript типы импорты
+        // import type { Type } from './types'
+        // import type DefaultType from './types'
+        'TS_TYPE_IMPORTS' => '/import\s+type\s+(?:{[^}]+}|[\w\d$_]+)\s+from\s+[\'"]([^\'"]+)[\'"]/',
+
+        // Комбинированные импорты типов TypeScript
+        // import { type Type, OtherExport } from './types'
+        // import { type Type as AliasType, OtherExport } from './types'
+        'TS_COMBINED_IMPORTS' => '/import\s+{[^}]*?(?:type\s+[\w\d$_]+\s*(?:as\s+[\w\d$_]+\s*)?)[^}]*?}\s+from\s+[\'"]([^\'"]+)[\'"]/',
+
+        // Vue 3 определения компонентов
+        // defineCustomElement(() => import('./MyElement.ce.vue'))
+        // defineCustomElement(async () => await import('./MyElement.ce.vue'))
+        'VUE_CUSTOM_ELEMENT' => '/defineCustomElement\s*\(\s*(?:async\s*)?\(\s*\)\s*=>\s*(?:await\s*)?import\s*\(\s*[\'"]([^\'"]+)[\'"]/'
+    ];
+
     private string $projectDir;
     private array $paths;
     private bool $scanDependencies;
@@ -30,35 +100,36 @@ class MergeFiles
     private string $fileIndexingMethod;
 
     // Внутренние кеши для оптимизации
-    private array $fileIndex = [];  // Индекс файлов в проекте для быстрого поиска по имени.
-    private array $dependencyCache = [];  // Кеш зависимостей для предотвращения повторного сканирования.
-    private array $contentCache = [];  // Кеш содержимого файлов для предотвращения повторного чтения.
-    private array $scannedFiles = [];  // Список уже сканированных файлов для избежания зацикливания.
+    private array $fileIndex = [];          // Индекс файлов в проекте для быстрого поиска по имени.
+    private array $dependencyCache = [];    // Кеш зависимостей для предотвращения повторного сканирования.
+    private array $contentCache = [];       // Кеш содержимого файлов для предотвращения повторного чтения.
+    private array $scannedFiles = [];       // Список уже сканированных файлов для избежания зацикливания.
 
     // Постоянные данные — поддерживаемые расширения для поиска зависимостей
     private const array DEPENDENCY_EXTENSIONS = ['vue', 'js', 'ts'];
 
     /**
      * Конструктор класса MergeFiles.
-     * Инициализирует объект с настройками для процесса объединения файлов.
-     *
-     * @param array $config Массив с конфигурацией, содержащий параметры:
-     *  - projectDir (string): Корневая директория проекта.
-     *  - dependencyScanRoot (string, опционально): Корневая директория для поиска зависимостей, по умолчанию совпадает с projectDir.
-     *  - paths (array): Массив путей, которые нужно обработать.
-     *  - scanDependencies (bool): Указывает, нужно ли сканировать зависимости (import'ы).
-     *  - extensions (array): Массив расширений файлов, которые будут включены в объединение.
-     *  - removeStyleTag (bool): Удалять ли теги <style>
-     *  - removeHtmlComments (bool): Удалять ли HTML-комментарии.
-     *  - removeSingleLineComments (bool): Удалять ли однострочные комментарии.
-     *  - removeMultiLineComments (bool): Удалять ли многострочные комментарии.
-     *  - removeEmptyLines (bool): Удалять ли пустые строки из файлов.
-     *  - includeInstructions (bool): Включать ли инструкции в консольный вывод.
-     *  - ignoreFiles (array): Массив файлов для игнорирования при объединении.
-     *  - ignoreDirectories (array): Массив директорий для игнорирования.
-     *  - outputFile (string): Имя файла, в который будет записан результат объединения.
-     *  - maxDepth (int, опционально): Максимальная глубина рекурсивного сканирования зависимостей.
-     *  - fileIndexingMethod (string): Метод индексации файлов ('php' или 'system').
+     * Инициализирует объект с конфигурацией для процесса объединения и обработки файлов.
+     * Поддерживает различные методы индексации, фильтрации и обработки зависимостей.
+     * 
+     * @param array $config Ассоциативный массив параметров конфигурации:
+     *     @type string $projectDir           Корневая директория проекта (абсолютный путь)
+     *     @type array  $paths               Массив относительных путей для обработки
+     *     @type bool   $scanDependencies    Включает сканирование зависимостей (import/require)
+     *     @type array  $extensions          Допустимые расширения файлов ['js', 'vue', 'ts' и т.д.]
+     *     @type bool   $removeStyleTag      Удаление тегов <style> и их содержимого
+     *     @type bool   $removeHtmlComments  Удаление HTML-комментариев <!-- -->
+     *     @type bool   $removeSingleLineComments Удаление однострочных комментариев
+     *     @type bool   $removeMultiLineComments  Удаление многострочных комментариев
+     *     @type bool   $removeEmptyLines    Удаление пустых строк и лишних пробелов
+     *     @type bool   $includeInstructions Добавление инструкций в консольный вывод
+     *     @type array  $ignoreFiles         Массив имен файлов для исключения
+     *     @type array  $ignoreDirectories   Массив путей директорий для исключения
+     *     @type string $outputFile          Путь к файлу для сохранения результата
+     *     @type int    $maxDepth            Максимальная глубина рекурсии (по умолчанию 1000)
+     *     @type string $fileListOutputFile  Путь к файлу для списка обработанных файлов
+     *     @type string $fileIndexingMethod  Метод индексации ('php'|'system', по умолчанию 'php')
      */
     public function __construct(array $config)
     {
@@ -378,96 +449,60 @@ class MergeFiles
     }
 
     /**
-     * Извлекает зависимости из JavaScript/TypeScript кода
-     * и разрешает пути к файлам относительно текущего файла
+     * Извлекает зависимости из JavaScript/TypeScript кода.
+     * Использует кэширование результатов и предварительные проверки для оптимизации производительности.
+     * Поддерживает различные форматы импортов: ES6+, CommonJS, динамические импорты,
+     * Vue компоненты и TypeScript конструкции.
      * 
      * @param string $content Содержимое JavaScript/TypeScript кода
-     * @param string $currentFile Текущий обрабатываемый файл для разрешения путей
+     * @param string $currentFile Текущий обрабатываемый файл для разрешения относительных путей
      * @return array Массив разрешенных путей к файлам зависимостей
      */
     private function extractScriptDependencies(string $content, string $currentFile): array
     {
+        // Кэшируем результаты для оптимизации повторных проверок
+        static $dependencyCache = [];
+
+        // Создаём уникальный ключ для кэша
+        $cacheKey = md5($content . $currentFile);
+
+        // Проверяем наличие результата в кэше
+        if (isset($dependencyCache[$cacheKey])) {
+            return $dependencyCache[$cacheKey];
+        }
+
+        // Быстрая предварительная проверка на наличие импортов
+        if (strpos($content, 'import') === false && strpos($content, 'require') === false) {
+            return $dependencyCache[$cacheKey] = [];
+        }
+
+        // Инициализируем массивы для сбора зависимостей
         $dependencies = [];
-
-        // Паттерны для различных типов импортов
-        $patterns = [
-            // ES6+ импорты с деструктуризацией и множественными экспортами
-            // import DefaultExport from './module'
-            // import { export1, export2 as alias2 } from './module' 
-            // import * as name from './module'
-            // import DefaultExport, { export1, export2 } from './module'
-            // import { Nullable }, asd from './types'
-            // import { Type }, DefaultExport, { Other } from './module'
-            '/import\s+(?:(?:{[^}]+}|\*\s+as\s+[^,]+|[\w\d$_]+)\s*,?\s*)*from\s+[\'"]([^\'"]+)[\'"]/',
-
-            // Импорты для побочных эффектов
-            // import './styles.css'
-            // import '@/plugins/vuetify'
-            // import 'normalize.css'
-            // import type { Type } from './types'
-            '/import\s+(?:type\s+)?[\'"]([^\'"]+)[\'"]/',
-
-            // CommonJS require
-            // const module = require('./module')
-            // require('@/utils/helper')
-            // let { method } = require('some-module')
-            // const { default: alias } = require('./module')
-            '/require\s*\(\s*[\'"]([^\'"]+)[\'"]/',
-
-            // Динамические импорты
-            // import('./module').then(module => {})
-            // const module = await import('./module')
-            // require.ensure(['./module'], function() {})
-            // const module = await require('./module')
-            '/(?:import|require)\s*\(\s*[\'"]([^\'"]+)[\'"]/',
-
-            // Vue специфичные импорты через defineAsyncComponent
-            // defineAsyncComponent(() => import('./AsyncComponent.vue'))
-            // defineAsyncComponent(() => import('@/components/MyComponent.vue'))
-            // defineAsyncComponent(async () => await import('./AsyncComponent.vue'))
-            '/defineAsyncComponent\s*\(\s*(?:async\s*)?\(\s*\)\s*=>\s*(?:await\s*)?import\s*\(\s*[\'"]([^\'"]+)[\'"]/',
-
-            // Vue компонент с динамическим импортом
-            // component: () => import('./LazyComponent.vue')
-            // components: { AsyncComponent: () => import('./AsyncComponent.vue') }
-            // component: async () => await import('./LazyComponent.vue')
-            '/component:\s*(?:async\s*)?\(\s*\)\s*=>\s*(?:await\s*)?import\s*\(\s*[\'"]([^\'"]+)[\'"]/',
-
-            // TypeScript типы импорты
-            // import type { Type } from './types'
-            // import type DefaultType from './types'
-            '/import\s+type\s+(?:{[^}]+}|[\w\d$_]+)\s+from\s+[\'"]([^\'"]+)[\'"]/',
-
-            // Комбинированные импорты типов TypeScript
-            // import { type Type, OtherExport } from './types'
-            // import { type Type as AliasType, OtherExport } from './types'
-            '/import\s+{[^}]*?(?:type\s+[\w\d$_]+\s*(?:as\s+[\w\d$_]+\s*)?)[^}]*?}\s+from\s+[\'"]([^\'"]+)[\'"]/',
-
-            // Vue 3 определения компонентов
-            // defineCustomElement(() => import('./MyElement.ce.vue'))
-            // defineCustomElement(async () => await import('./MyElement.ce.vue'))
-            '/defineCustomElement\s*\(\s*(?:async\s*)?\(\s*\)\s*=>\s*(?:await\s*)?import\s*\(\s*[\'"]([^\'"]+)[\'"]/'
-        ];
-
-        // Собираем все найденные пути импортов
         $importPaths = [];
-        foreach ($patterns as $pattern) {
+
+        // Извлекаем все пути импортов используя предопределенные паттерны
+        foreach (self::PATTERNS as $pattern) {
             if (preg_match_all($pattern, $content, $matches)) {
                 $importPaths = array_merge($importPaths, $matches[1]);
             }
         }
 
-        // Разрешаем каждый путь импорта в реальный путь файла
-        foreach ($importPaths as $importPath) {
-            // Пробуем разрешить путь импорта в реальный путь файла
-            $resolvedPath = $this->resolveDependencyPath($importPath, $currentFile);
-            if ($resolvedPath) {
-                $dependencies[] = $resolvedPath;
+        // Обрабатываем найденные пути импортов
+        if (!empty($importPaths)) {
+            // Удаляем дубликаты путей
+            $importPaths = array_unique($importPaths);
+
+            // Разрешаем каждый путь импорта
+            foreach ($importPaths as $importPath) {
+                $resolvedPath = $this->resolveDependencyPath($importPath, $currentFile);
+                if ($resolvedPath) {
+                    $dependencies[] = $resolvedPath;
+                }
             }
         }
 
-        // Возвращаем уникальные зависимости
-        return array_values(array_unique($dependencies));
+        // Кэшируем и возвращаем уникальные зависимости
+        return $dependencyCache[$cacheKey] = array_values(array_unique($dependencies));
     }
 
     /**
@@ -602,50 +637,46 @@ class MergeFiles
 
     /**
      * Применяет настроенные фильтры к содержимому файла.
-     * Использует кэширование регулярных выражений для оптимизации производительности.
-     * Поддерживает различные типы фильтрации: стили, комментарии, пустые строки.
-     *
+     * Использует предопределенные константы паттернов для оптимизации производительности.
+     * Поддерживает удаление стилей, комментариев и пустых строк на основе конфигурации.
+     * 
      * @param string $content Исходное содержимое файла
      * @return string Отфильтрованное содержимое
-     *
-     * Особенности реализации:
-     * - Статическое кэширование паттернов
-     * - Ленивая инициализация фильтров
-     * - Оптимизированные регулярные выражения
-     * - Условное применение фильтров
      */
     private function applyFilters(string $content): string
     {
-        // Кэшируем массивы паттернов и замен между вызовами
-        static $patterns = null;
-        static $replacements = null;
+        // Формируем массивы паттернов и замен на основе конфигурации
+        $patterns = [];
+        $replacements = [];
 
-        // Ленивая инициализация фильтров при первом вызове
-        if ($patterns === null) {
-            $patterns = [];
-            $replacements = [];
+        // Добавляем фильтр для тегов style
+        if ($this->removeStyleTag) {
+            $patterns[] = self::STYLE_TAG_PATTERN;
+            $replacements[] = '';
+        }
 
-            // Добавляем фильтры только если они включены в настройках
-            if ($this->removeStyleTag) {
-                $patterns[] = '/<style.*?>.*?<\/style>/s';
-                $replacements[] = '';
-            }
-            if ($this->removeHtmlComments) {
-                $patterns[] = '/<!--.*?-->/s';
-                $replacements[] = '';
-            }
-            if ($this->removeSingleLineComments) {
-                $patterns[] = '!^\s*//.*?(\r?\n|\r)!m';
-                $replacements[] = '';
-            }
-            if ($this->removeMultiLineComments) {
-                $patterns[] = '!/\*[\s\S]*?\*/\s*!';
-                $replacements[] = '';
-            }
-            if ($this->removeEmptyLines) {
-                $patterns[] = "/(^[\r\n]*|[\r\n]+)[\s\t]*[\r\n]+/";
-                $replacements[] = PHP_EOL;
-            }
+        // Добавляем фильтр для HTML комментариев
+        if ($this->removeHtmlComments) {
+            $patterns[] = self::HTML_COMMENTS_PATTERN;
+            $replacements[] = '';
+        }
+
+        // Добавляем фильтр для однострочных комментариев
+        if ($this->removeSingleLineComments) {
+            $patterns[] = self::SINGLE_LINE_COMMENTS_PATTERN;
+            $replacements[] = '';
+        }
+
+        // Добавляем фильтр для многострочных комментариев
+        if ($this->removeMultiLineComments) {
+            $patterns[] = self::MULTI_LINE_COMMENTS_PATTERN;
+            $replacements[] = '';
+        }
+
+        // Добавляем фильтр для пустых строк
+        if ($this->removeEmptyLines) {
+            $patterns[] = self::EMPTY_LINES_PATTERN;
+            $replacements[] = PHP_EOL;
         }
 
         // Применяем фильтры только если они определены
