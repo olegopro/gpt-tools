@@ -347,53 +347,126 @@ class MergeFiles
     }
 
     /**
-     * Извлекает все зависимости из содержимого файла.
-     * Использует построчный анализ и упрощенное регулярное выражение
-     * для повышения производительности.
+     * Извлекает все зависимости из файла, учитывая его тип (Vue/JS/TS)
+     * и различные форматы импортов
      *
      * @param string $content Содержимое файла для анализа
      * @param string $currentFile Текущий обрабатываемый файл
      * @param int $depth Текущая глубина рекурсии
-     * @return array Массив уникальных путей к файлам зависимостей
-     *
-     * Оптимизации производительности:
-     * - Построчный анализ вместо анализа всего файла
-     * - Предварительная проверка строки на наличие import
-     * - Использование ассоциативного массива для уникальности
-     * - Упрощенное регулярное выражение
+     * @return array Массив найденных зависимостей
      */
     private function extractDependencies(string $content, string $currentFile, int $depth): array
     {
-        // Используем ассоциативный массив для автоматической дедупликации
+        $dependencies = [];
+        $extension = pathinfo($currentFile, PATHINFO_EXTENSION);
+
+        if ($extension === 'vue') {
+            // Для Vue файлов извлекаем содержимое всех script тегов
+            preg_match_all('/<script(?:\s+[^>]*)?>(.*?)<\/script>/s', $content, $matches);
+
+            foreach ($matches[1] as $scriptContent) {
+                // Обрабатываем каждый script блок отдельно, передавая текущий файл
+                $dependencies = array_merge($dependencies, $this->extractScriptDependencies($scriptContent, $currentFile));
+            }
+        } else {
+            // Для JS/TS файлов обрабатываем весь контент, передавая текущий файл
+            $dependencies = $this->extractScriptDependencies($content, $currentFile);
+        }
+
+        return array_unique($dependencies);
+    }
+
+    /**
+     * Извлекает зависимости из JavaScript/TypeScript кода
+     * и разрешает пути к файлам относительно текущего файла
+     * 
+     * @param string $content Содержимое JavaScript/TypeScript кода
+     * @param string $currentFile Текущий обрабатываемый файл для разрешения путей
+     * @return array Массив разрешенных путей к файлам зависимостей
+     */
+    private function extractScriptDependencies(string $content, string $currentFile): array
+    {
         $dependencies = [];
 
-        // Разбиваем содержимое на строки для построчного анализа
-        $lines = explode("\n", $content);
+        // Паттерны для различных типов импортов
+        $patterns = [
+            // ES6+ импорты с деструктуризацией и множественными экспортами
+            // import DefaultExport from './module'
+            // import { export1, export2 as alias2 } from './module' 
+            // import * as name from './module'
+            // import DefaultExport, { export1, export2 } from './module'
+            // import { Nullable }, asd from './types'
+            // import { Type }, DefaultExport, { Other } from './module'
+            '/import\s+(?:(?:{[^}]+}|\*\s+as\s+[^,]+|[\w\d$_]+)\s*,?\s*)*from\s+[\'"]([^\'"]+)[\'"]/',
 
-        foreach ($lines as $line) {
-            // Быстрая проверка наличия import в строке
-            if (strpos($line, 'import') === false) continue;
+            // Импорты для побочных эффектов
+            // import './styles.css'
+            // import '@/plugins/vuetify'
+            // import 'normalize.css'
+            // import type { Type } from './types'
+            '/import\s+(?:type\s+)?[\'"]([^\'"]+)[\'"]/',
 
-            // Используем упрощенное регулярное выражение для извлечения пути
-            if (preg_match('/[\'"]([^\'"]+)[\'"]/', $line, $match)) {
-                $dependencyPath = $this->resolveDependencyPath($match[1], $currentFile);
+            // CommonJS require
+            // const module = require('./module')
+            // require('@/utils/helper')
+            // let { method } = require('some-module')
+            // const { default: alias } = require('./module')
+            '/require\s*\(\s*[\'"]([^\'"]+)[\'"]/',
 
-                // Проверяем валидность пути и отсутствие дубликата
-                if ($dependencyPath && !isset($dependencies[$dependencyPath])) {
-                    $dependencies[$dependencyPath] = true;
+            // Динамические импорты
+            // import('./module').then(module => {})
+            // const module = await import('./module')
+            // require.ensure(['./module'], function() {})
+            // const module = await require('./module')
+            '/(?:import|require)\s*\(\s*[\'"]([^\'"]+)[\'"]/',
 
-                    // Рекурсивно обрабатываем зависимости если не достигнут максимум
-                    if ($depth < $this->maxDepth) {
-                        foreach ($this->scanDependencies($dependencyPath, $depth + 1) as $dep) {
-                            $dependencies[$dep] = true;
-                        }
-                    }
-                }
+            // Vue специфичные импорты через defineAsyncComponent
+            // defineAsyncComponent(() => import('./AsyncComponent.vue'))
+            // defineAsyncComponent(() => import('@/components/MyComponent.vue'))
+            // defineAsyncComponent(async () => await import('./AsyncComponent.vue'))
+            '/defineAsyncComponent\s*\(\s*(?:async\s*)?\(\s*\)\s*=>\s*(?:await\s*)?import\s*\(\s*[\'"]([^\'"]+)[\'"]/',
+
+            // Vue компонент с динамическим импортом
+            // component: () => import('./LazyComponent.vue')
+            // components: { AsyncComponent: () => import('./AsyncComponent.vue') }
+            // component: async () => await import('./LazyComponent.vue')
+            '/component:\s*(?:async\s*)?\(\s*\)\s*=>\s*(?:await\s*)?import\s*\(\s*[\'"]([^\'"]+)[\'"]/',
+
+            // TypeScript типы импорты
+            // import type { Type } from './types'
+            // import type DefaultType from './types'
+            '/import\s+type\s+(?:{[^}]+}|[\w\d$_]+)\s+from\s+[\'"]([^\'"]+)[\'"]/',
+
+            // Комбинированные импорты типов TypeScript
+            // import { type Type, OtherExport } from './types'
+            // import { type Type as AliasType, OtherExport } from './types'
+            '/import\s+{[^}]*?(?:type\s+[\w\d$_]+\s*(?:as\s+[\w\d$_]+\s*)?)[^}]*?}\s+from\s+[\'"]([^\'"]+)[\'"]/',
+
+            // Vue 3 определения компонентов
+            // defineCustomElement(() => import('./MyElement.ce.vue'))
+            // defineCustomElement(async () => await import('./MyElement.ce.vue'))
+            '/defineCustomElement\s*\(\s*(?:async\s*)?\(\s*\)\s*=>\s*(?:await\s*)?import\s*\(\s*[\'"]([^\'"]+)[\'"]/'
+        ];
+
+        // Собираем все найденные пути импортов
+        $importPaths = [];
+        foreach ($patterns as $pattern) {
+            if (preg_match_all($pattern, $content, $matches)) {
+                $importPaths = array_merge($importPaths, $matches[1]);
             }
         }
 
-        // Возвращаем только ключи, так как значения были использованы только для дедупликации
-        return array_keys($dependencies);
+        // Разрешаем каждый путь импорта в реальный путь файла
+        foreach ($importPaths as $importPath) {
+            // Пробуем разрешить путь импорта в реальный путь файла
+            $resolvedPath = $this->resolveDependencyPath($importPath, $currentFile);
+            if ($resolvedPath) {
+                $dependencies[] = $resolvedPath;
+            }
+        }
+
+        // Возвращаем уникальные зависимости
+        return array_values(array_unique($dependencies));
     }
 
     /**
