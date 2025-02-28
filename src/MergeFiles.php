@@ -403,19 +403,39 @@ class MergeFiles
         $content = $this->getFileContent($fullPath);
 
         // Быстрая предварительная проверка наличия импортов
-        if (strpos($content, 'import') === false) {
+        if (strpos($content, 'import') === false && strpos($content, 'require') === false) {
             unset($this->scannedFiles[$file]);
             return [];
         }
 
-        // Извлекаем и обрабатываем зависимости
-        $dependencies = $this->extractDependencies($content, $file, $depth);
+        // Извлекаем прямые зависимости
+        $directDependencies = $this->extractDependencies($content, $file, $depth);
 
-        // Сохраняем результат в кэш и очищаем маркер сканирования
-        $this->dependencyCache[$file] = $dependencies;
+        // Инициализируем массив всех зависимостей, начиная с прямых
+        $allDependencies = $directDependencies;
+
+        // Рекурсивно обрабатываем каждую найденную зависимость
+        foreach ($directDependencies as $dependency) {
+            // Избегаем повторной обработки текущего файла для предотвращения зацикливания
+            if ($dependency !== $file) {
+                // Рекурсивный вызов для получения зависимостей зависимостей
+                $nestedDependencies = $this->scanDependencies($dependency, $depth + 1);
+
+                // Объединяем с общим массивом зависимостей
+                if (!empty($nestedDependencies)) {
+                    $allDependencies = array_merge($allDependencies, $nestedDependencies);
+                }
+            }
+        }
+
+        // Удаляем дубликаты и сохраняем результат в кэш
+        $uniqueDependencies = array_unique($allDependencies);
+        $this->dependencyCache[$file] = $uniqueDependencies;
+
+        // Очищаем маркер сканирования
         unset($this->scannedFiles[$file]);
 
-        return $dependencies;
+        return $uniqueDependencies;
     }
 
     /**
