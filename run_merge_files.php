@@ -5,8 +5,8 @@ require_once 'src/StructureVisualizer.php';
 require_once 'src/StructureVisualizerManager.php';
 
 $config = [
-    'projectDir'               => '/project-directory',
-    'paths'                    => [
+    'projectDir' => '/project-directory',
+    'paths'      => [
         '/folder',
         '/folder/file.php'
     ],
@@ -26,4 +26,16 @@ $config = [
 ];
 
 (new MergeFiles($config))->merge();
+
+// Проверка лимита строк
+$outputFile = $config['outputFile'];
+if (file_exists($outputFile) &&
+    !empty(array_filter(
+        file($outputFile, FILE_IGNORE_NEW_LINES),
+        fn ($line) => strlen($line) > 100
+    ))) {
+
+    echo "Превышен лимит длины строк ⚠️" . PHP_EOL;
+}
+
 (new StructureVisualizerManager())->visualize();
